@@ -23,6 +23,8 @@ def export_analysis_settings(result: LSVAnalysisResult, path: str | Path) -> Pat
             "outliers": result.settings.outlier_method,
             "exclusions": "All data included",
         },
+        "current_sign_qc": [asdict(item) for item in result.current_sign_qc],
+        "warnings": list(result.warnings),
         "source_files": [
             {
                 "file_name": item.manifest.file_name,

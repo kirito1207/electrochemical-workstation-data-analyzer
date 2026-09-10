@@ -15,6 +15,7 @@ from .descriptive import DescriptiveStatistics, describe_values
 from .metadata import ExperimentManifest, ManifestEntry, infer_experiment_manifest
 from .outliers import OutlierFlag, flag_mad_outliers
 from .potential import CurrentAtPotential, extract_current_at_potential
+from .sign_qc import CurrentSignQC, evaluate_current_signs
 from .statistics import ComparisonResult, compare_groups
 
 
@@ -33,13 +34,16 @@ class AnalysisSettings:
     bootstrap_seed: int = 20260910
     bootstrap_resamples: int = 5000
     outlier_method: str = "MAD modified z-score"
-    software_version: str = "0.2.0"
+    sign_zero_tolerance_A: float = 1e-12
+    software_version: str = "0.2.1"
 
     def resolved(self) -> "AnalysisSettings":
         if self.analysis_metric not in {"magnitude", "signed"}:
             raise ValueError("analysis_metric must be 'magnitude' or 'signed'.")
         if self.bootstrap_resamples < 5000:
             raise ValueError("bootstrap_resamples must be at least 5000.")
+        if not np.isfinite(self.sign_zero_tolerance_A) or self.sign_zero_tolerance_A < 0.0:
+            raise ValueError("sign_zero_tolerance_A must be a finite non-negative value.")
         timestamp = self.analysis_timestamp or datetime.now(timezone.utc).isoformat(timespec="seconds")
         return replace(self, analysis_timestamp=timestamp)
 
@@ -67,6 +71,8 @@ class LSVAnalysisResult:
     group_summaries: tuple[GroupSummary, ...]
     comparisons: tuple[ComparisonResult, ...]
     outlier_flags: tuple[OutlierFlag, ...]
+    current_sign_qc: tuple[CurrentSignQC, ...]
+    warnings: tuple[str, ...]
     exclusion_log: tuple[str, ...] = ()
 
     def summary(self, group: str, metric: AnalysisMetric) -> GroupSummary:
@@ -138,6 +144,8 @@ def analyze_lsv_files(
     group_summaries: list[GroupSummary] = []
     grouped_primary: dict[str, list[float]] = {}
     outlier_flags: list[OutlierFlag] = []
+    current_sign_qc: list[CurrentSignQC] = []
+    all_material_currents_A: list[float] = []
     for group in ("A", "B", "C"):
         material = [
             item
@@ -146,6 +154,17 @@ def analyze_lsv_files(
         ]
         if len(material) != 13:
             raise ValueError(f"Group {group} does not contain exactly 13 Material electrodes.")
+        signed_currents_A = [item.selected.current_A for item in material]
+        all_material_currents_A.extend(signed_currents_A)
+        current_sign_qc.append(
+            evaluate_current_signs(
+                signed_currents_A,
+                group=group,
+                target_potential_V=resolved.target_potential_V,
+                analysis_metric=resolved.analysis_metric,
+                zero_tolerance_A=resolved.sign_zero_tolerance_A,
+            )
+        )
         for metric in ("signed", "magnitude"):
             values = [_metric_value(item, metric) for item in material]
             group_summaries.append(
@@ -174,6 +193,21 @@ def analyze_lsv_files(
             )
         )
 
+    current_sign_qc.append(
+        evaluate_current_signs(
+            all_material_currents_A,
+            group="ALL",
+            target_potential_V=resolved.target_potential_V,
+            analysis_metric=resolved.analysis_metric,
+            zero_tolerance_A=resolved.sign_zero_tolerance_A,
+        )
+    )
+    warnings = tuple(
+        f"Group {item.group}: {item.warning}"
+        for item in current_sign_qc
+        if item.group != "ALL" and item.warning
+    )
+
     comparisons = compare_groups(
         grouped_primary,
         bootstrap_seed=resolved.bootstrap_seed,
@@ -186,6 +220,8 @@ def analyze_lsv_files(
         group_summaries=tuple(group_summaries),
         comparisons=comparisons,
         outlier_flags=tuple(outlier_flags),
+        current_sign_qc=tuple(current_sign_qc),
+        warnings=warnings,
     )
 
 

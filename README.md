@@ -82,6 +82,8 @@ run = run_lsv_analysis(
 
 默认主指标为指定电位处的绝对电流幅值，但 signed current 始终同时保留。分析不会平滑、基线校正、归一化、改变整条曲线符号、自动寻找最显著电位或自动删除 MAD 标记点。正式比较固定为 A–B 和 B–C；A–C 仅标记为 exploratory。
 
+Stage 3.1 增加指定电位电流方向一致性 QC。程序使用明确记录的 `1e-12 A` near-zero tolerance，分别统计 A、B、C 和全部 39 根 Material electrodes 的正、负和近零电流数量。magnitude 模式下若任一组同时存在明显正、负电流，分析继续执行，但会提示绝对值可能掩盖电流方向反转，并要求检查 signed-current 结果。该 QC 不删除样本、不改变原始电流，也不参与已有统计计算。
+
 Stage 3 仍不包括 GUI、i-t 校准分析或 Windows 打包。
 
 ## 安装与测试

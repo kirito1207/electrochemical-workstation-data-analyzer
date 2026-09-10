@@ -30,6 +30,7 @@ EXPLICIT_WIDTHS = {
     "multiple_comparison": 35,
     "outlier_method": 25,
     "outlier_reason": 58,
+    "warning": 72,
     "statistical_methods": 58,
     "Value": 58,
 }
@@ -95,6 +96,7 @@ def _append_table(sheet, headers: Sequence[str], rows: Iterable[Sequence[object]
                 "test",
                 "multiple_comparison",
                 "outlier_reason",
+                "warning",
                 "Value",
             }
             cell.alignment = Alignment(vertical="center", wrap_text=wrap)
@@ -102,7 +104,13 @@ def _append_table(sheet, headers: Sequence[str], rows: Iterable[Sequence[object]
             if number_format and isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
                 cell.number_format = number_format
         if any(
-            str(headers[column - 1]) in {"comparison_role", "test", "outlier_reason", "Value"}
+            str(headers[column - 1]) in {
+                "comparison_role",
+                "test",
+                "outlier_reason",
+                "warning",
+                "Value",
+            }
             for column in range(1, len(headers) + 1)
         ):
             sheet.row_dimensions[row[0].row].height = 30
@@ -145,10 +153,16 @@ def export_analysis_workbook(result: LSVAnalysisResult, path: str | Path) -> Pat
         ("bootstrap_seed", result.settings.bootstrap_seed),
         ("bootstrap_resamples", result.settings.bootstrap_resamples),
         ("outlier_method", result.settings.outlier_method),
+        ("sign_zero_tolerance_A", result.settings.sign_zero_tolerance_A),
+        ("sign_qc_warnings", " | ".join(result.warnings) if result.warnings else "None"),
         ("exclusions", "All data included"),
         ("software_version", result.settings.software_version),
     ]
     _append_table(settings_sheet, ("Setting", "Value"), setting_rows)
+
+    sign_qc_rows = [asdict(item) for item in result.current_sign_qc]
+    sign_qc_sheet = workbook.create_sheet("Current_Sign_QC")
+    _dict_table(sign_qc_sheet, sign_qc_rows)
 
     metadata_rows = [
         {
@@ -213,7 +227,7 @@ def export_analysis_workbook(result: LSVAnalysisResult, path: str | Path) -> Pat
         sheet.page_setup.fitToWidth = 1
         sheet.page_setup.fitToHeight = 0
         sheet.sheet_properties.tabColor = "1F4E78" if sheet.title in {
-            "Analysis_Settings", "Group_Summary", "Statistics"
+            "Analysis_Settings", "Current_Sign_QC", "Group_Summary", "Statistics"
         } else "9DC3E6"
 
     workbook.save(output)

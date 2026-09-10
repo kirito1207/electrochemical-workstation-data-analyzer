@@ -29,6 +29,7 @@ def test_excel_contains_all_required_sheets(tmp_path, synthetic_analysis_result)
 
     assert workbook.sheetnames == [
         "Analysis_Settings",
+        "Current_Sign_QC",
         "File_Metadata",
         "Experiment_Parameters",
         "Selected_Potential_Data",
@@ -38,6 +39,8 @@ def test_excel_contains_all_required_sheets(tmp_path, synthetic_analysis_result)
         "Exclusion_Log",
     ]
     assert workbook["Selected_Potential_Data"].max_row == 43
+    assert workbook["Current_Sign_QC"].max_row == 5
+    assert workbook["Current_Sign_QC"]["H2"].value in {True, False}
     assert workbook["Exclusion_Log"]["A2"].value == "All data included"
 
 
@@ -47,6 +50,8 @@ def test_analysis_log_records_settings_and_all_sources(tmp_path, synthetic_analy
 
     assert '"target_potential_V": 0.0' in text
     assert '"analysis_metric": "magnitude"' in text
+    assert '"current_sign_qc"' in text
+    assert '"zero_tolerance_A": 1e-12' in text
     assert text.count('"source_sha256"') == 42
 
 

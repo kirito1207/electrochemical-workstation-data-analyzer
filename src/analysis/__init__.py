@@ -20,17 +20,26 @@ from .potential import (
     PotentialOutOfRangeError,
     extract_current_at_potential,
 )
+from .sign_qc import (
+    CurrentSignQC,
+    DEFAULT_SIGN_ZERO_TOLERANCE_A,
+    MIXED_SIGN_WARNING,
+    evaluate_current_signs,
+)
 from .statistics import ComparisonResult, compare_groups, holm_adjust
 
 __all__ = [
     "AnalysisSettings",
     "ComparisonResult",
     "CurrentAtPotential",
+    "CurrentSignQC",
+    "DEFAULT_SIGN_ZERO_TOLERANCE_A",
     "DescriptiveStatistics",
     "ExperimentManifest",
     "LSVAnalysisResult",
     "ManifestEntry",
     "MetadataResolutionError",
+    "MIXED_SIGN_WARNING",
     "OutlierFlag",
     "PotentialGridMismatchError",
     "PotentialOutOfRangeError",
@@ -38,6 +47,7 @@ __all__ = [
     "compare_groups",
     "describe_values",
     "extract_current_at_potential",
+    "evaluate_current_signs",
     "flag_mad_outliers",
     "holm_adjust",
     "infer_experiment_manifest",
