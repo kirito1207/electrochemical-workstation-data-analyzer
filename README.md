@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 4.6
+# chi760e-h2o2-analyzer — Stage 5.1
 
-当前开发状态：**Stage 4.6（可选 PB42 preset 隔离 + technique-specific routing）**。
+当前开发状态：**Stage 5.1（中文 GUI 基础、文件加载、parser routing 与原始数据预览）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -187,6 +187,24 @@ Generic LSV core 不导入 `presets.pb42`，也不依赖 PB42 的组名、样本
 `infer_experiment_manifest()` 仅作为 backward-compatible、PB42-specific legacy alias 保留，并会产生 deprecation warning。README 不把它作为 Generic Mode 入口，未来 Generic GUI 也不得调用它；推荐流程始终是 `suggest_generic_manifest()` → 用户核对和编辑 → `confirmed_generic_manifest()`。
 
 `route_for_experiment_type()` 为未来 GUI 提供小型 technique routing contract：当前只路由 LSV 和 i-t。CV 与 CA 尚未实现，不能被强行送入 LSV 分析。未来 CV/CA 可以复用 generic metadata、通用统计、export 和 plotting utilities，但必须有 technique-specific parser 与 analysis logic。尤其 CV 中同一 potential 可在不同 cycle、segment 和 sweep direction 重复出现，因此未来 current-at-potential API 必须显式区分这些维度，不能复用 LSV 的单调电位轴假设。
+
+## Stage 5.1 中文 GUI 基础
+
+Stage 5.1 建立基于 Python `tkinter + ttk` 的中文桌面框架。用户可以选择单个或多个 `.bin` 文件，也可以选择文件夹并递归发现 `.bin`；文件只读解析，不移动、不重命名、不覆盖。每个文件独立处理，一个失败文件不会阻止其他文件。
+
+启动方式：
+
+```bash
+python -m chi_gui
+```
+
+主窗口提供主页、LSV、i-t、CV 和 CA 导航。LSV 与 i-t 根据 `route_for_experiment_type()` 分流，并显示文件状态、点数、主要实验参数、warning/error 以及内存中的 raw curve preview。LSV 预览使用 `potential_V/current_A`，i-t 预览使用 `time_s/current_A`；电流仅在显示时换算为 µA，不平滑、不校正基线、不归一化、不改变符号，也不写入 `results/`。
+
+CV/CA 当前明确标记为尚未支持，不会路由到 LSV/i-t。Generic GUI 启动和数据加载不 import `presets.pb42`；未来只有用户主动选择 PB42 实验预设时才允许 lazy import。
+
+批量解析通过后台线程执行，worker 只向 thread-safe queue 写入事件，Tk widgets 始终由主线程更新。界面显示进度、批次计数和中文错误摘要，并允许查看技术异常名称与结构化 parser diagnostics。
+
+Stage 5.1 尚未提供 LSV 正式 metadata/statistics workflow，也未提供 i-t Step Protocol/calibration workflow；这些将在后续 GUI 阶段接入已有且经过测试的科研后端，不会在 GUI 中重新实现统计公式。
 
 ## 安装与测试
 
