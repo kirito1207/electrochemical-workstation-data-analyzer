@@ -13,9 +13,26 @@ class LogPanel(ttk.LabelFrame):
         self.text = scrolledtext.ScrolledText(self, height=7, wrap="word", state="disabled")
         self.text.pack(fill="both", expand=True, padx=6, pady=6)
 
-    def append(self, message: str) -> None:
+    @staticmethod
+    def format_message(message: str) -> str:
         stamp = datetime.now().strftime("%H:%M:%S")
+        return f"[{stamp}] {message}"
+
+    def append(self, message: str) -> str:
+        line = self.format_message(message)
+        self.append_line(line)
+        return line
+
+    def append_line(self, line: str) -> None:
         self.text.configure(state="normal")
-        self.text.insert("end", f"[{stamp}] {message}\n")
+        self.text.insert("end", f"{line}\n")
         self.text.see("end")
+        self.text.configure(state="disabled")
+
+    def set_messages(self, messages: list[str]) -> None:
+        self.text.configure(state="normal")
+        self.text.delete("1.0", "end")
+        if messages:
+            self.text.insert("1.0", "\n".join(messages) + "\n")
+            self.text.see("end")
         self.text.configure(state="disabled")

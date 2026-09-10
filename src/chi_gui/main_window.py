@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .background import BackgroundRunner, WorkerEvent
 from .controller import GUIController, discover_bin_files
@@ -12,7 +12,8 @@ from .dialogs import confirm_close_while_busy, show_record_details
 from .formatting import parameter_rows
 from .pages import IT_STAGE_MESSAGE, LSV_STAGE_MESSAGE, WELCOME_MESSAGE, unsupported_message
 from .state import AppState, FileRecord, PreviewDisplayState
-from .widgets import CurveList, FileTable, LogPanel, PlotPreview
+from .widgets import CurveList, FileTable, LogPanel, PlotPreview, WorkspaceTabs
+from .workspaces import WorkspaceManager, WorkspaceSession
 
 
 WINDOW_TITLE = "CHI760E 电化学数据分析工具"
@@ -22,12 +23,10 @@ class MainWindow:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.controller = GUIController()
-        self.state = AppState()
-        self.preview_display = PreviewDisplayState()
+        self.workspace_manager = WorkspaceManager()
         self.runner = BackgroundRunner()
-        self.current_route = "all"
         self.current_record: FileRecord | None = None
-        self.selected_by_route: dict[str, str | None] = {"LSV": None, "i-t": None}
+        self._running_workspace_id: str | None = None
         self._closing = False
 
         root.title(WINDOW_TITLE)
@@ -36,8 +35,34 @@ class MainWindow:
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._configure_style()
         self._build_layout()
+        self._refresh_workspace_tabs()
+        self.log_panel.set_messages(self.workspace.log_messages)
         self._set_route("all")
         self.root.after(100, self._poll_worker)
+
+    @property
+    def workspace(self) -> WorkspaceSession:
+        return self.workspace_manager.active
+
+    @property
+    def state(self) -> AppState:
+        return self.workspace.state
+
+    @property
+    def preview_display(self) -> PreviewDisplayState:
+        return self.workspace.preview_display
+
+    @property
+    def selected_by_route(self) -> dict[str, str | None]:
+        return self.workspace.selected_by_route
+
+    @property
+    def current_route(self) -> str:
+        return self.workspace.current_route
+
+    @current_route.setter
+    def current_route(self, route: str) -> None:
+        self.workspace.current_route = route
 
     def _configure_style(self) -> None:
         style = ttk.Style(self.root)
@@ -74,18 +99,27 @@ class MainWindow:
         workspace = ttk.Frame(shell)
         workspace.grid(row=0, column=1, sticky="nsew")
         workspace.columnconfigure(0, weight=1)
-        workspace.rowconfigure(2, weight=3)
-        workspace.rowconfigure(3, weight=2)
+        workspace.rowconfigure(3, weight=3)
+        workspace.rowconfigure(4, weight=2)
+
+        self.workspace_tabs = WorkspaceTabs(
+            workspace,
+            on_select=self._switch_workspace,
+            on_new=self._new_workspace,
+            on_close=self._close_workspace,
+            on_rename=self._rename_workspace,
+        )
+        self.workspace_tabs.grid(row=0, column=0, sticky="ew", pady=(0, 5))
 
         header = ttk.Frame(workspace)
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        header.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         header.columnconfigure(0, weight=1)
         ttk.Label(header, text=WINDOW_TITLE, style="Title.TLabel").grid(row=0, column=0, sticky="w")
         self.progress = ttk.Progressbar(header, mode="determinate", length=210)
         self.progress.grid(row=0, column=1, sticky="e", padx=(12, 0))
 
         toolbar = ttk.Frame(workspace)
-        toolbar.grid(row=1, column=0, sticky="ew", pady=(0, 6))
+        toolbar.grid(row=2, column=0, sticky="ew", pady=(0, 6))
         self.action_buttons = []
         for text, command in (
             ("选择文件", self._choose_files),
@@ -104,14 +138,14 @@ class MainWindow:
         )
 
         table_frame = ttk.LabelFrame(workspace, text="文件列表")
-        table_frame.grid(row=2, column=0, sticky="nsew")
+        table_frame.grid(row=3, column=0, sticky="nsew")
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
         self.file_table = FileTable(table_frame, on_select=self._record_selected)
         self.file_table.grid(row=0, column=0, sticky="nsew")
 
         lower = ttk.Panedwindow(workspace, orient="horizontal")
-        lower.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
+        lower.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
         self.plot_preview = PlotPreview(lower)
         lower.add(self.plot_preview, weight=3)
 
@@ -131,6 +165,77 @@ class MainWindow:
         ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 4)).pack(
             fill="x", side="bottom"
         )
+
+    def _refresh_workspace_tabs(self) -> None:
+        self.workspace_tabs.set_sessions(
+            self.workspace_manager.sessions,
+            self.workspace.workspace_id,
+        )
+
+    def _new_workspace(self) -> None:
+        session = self.workspace_manager.create()
+        self._refresh_workspace_tabs()
+        self.log_panel.set_messages(session.log_messages)
+        self.current_record = None
+        self._set_route(session.current_route)
+
+    def _switch_workspace(self, workspace_id: str) -> None:
+        if workspace_id == self.workspace.workspace_id:
+            return
+        session = self.workspace_manager.switch(workspace_id)
+        self._refresh_workspace_tabs()
+        self.log_panel.set_messages(session.log_messages)
+        self.current_record = None
+        self._set_route(session.current_route)
+
+    def _rename_workspace(self, workspace_id: str) -> None:
+        session = self.workspace_manager.get(workspace_id)
+        if session is None:
+            return
+        name = simpledialog.askstring(
+            "重命名工作区",
+            "请输入新的工作区名称：",
+            initialvalue=session.name,
+            parent=self.root,
+        )
+        if name is None:
+            return
+        try:
+            self.workspace_manager.rename(workspace_id, name)
+        except ValueError as error:
+            messagebox.showwarning("名称无效", str(error), parent=self.root)
+            return
+        self._refresh_workspace_tabs()
+
+    def _close_workspace(self, workspace_id: str) -> None:
+        session = self.workspace_manager.get(workspace_id)
+        if session is None:
+            return
+        if workspace_id == self._running_workspace_id and self.runner.busy:
+            messagebox.showinfo(
+                "无法关闭工作区",
+                "该工作区正在解析文件，请等待任务完成后再关闭。",
+                parent=self.root,
+            )
+            return
+        if session.state.records and not messagebox.askyesno(
+            "关闭工作区",
+            "该工作区包含已加载数据，确定关闭？\n原始文件不会被删除。",
+            parent=self.root,
+        ):
+            return
+        self.workspace_manager.close(workspace_id)
+        self._refresh_workspace_tabs()
+        self.log_panel.set_messages(self.workspace.log_messages)
+        self.current_record = None
+        self._set_route(self.workspace.current_route)
+
+    def _log(self, message: str, *, session: WorkspaceSession | None = None) -> None:
+        target = session or self.workspace
+        line = LogPanel.format_message(message)
+        target.log_messages.append(line)
+        if target.workspace_id == self.workspace.workspace_id:
+            self.log_panel.append_line(line)
 
     def _set_route(self, route: str) -> None:
         self.current_route = route
@@ -153,8 +258,11 @@ class MainWindow:
         if route in {"LSV", "i-t"}:
             self._render_technique_preview(route)
         else:
-            self.current_record = None
-            self._render_parameters(None)
+            selected_key = self.selected_by_route.get(route)
+            selected = next((item for item in records if item.key == selected_key), None)
+            self.current_record = selected
+            self._render_parameters(selected)
+            self.file_table.select_record(selected.key if selected is not None else None)
             self.curve_list.set_collection(None)
             self.plot_preview.clear(
                 "请选择 LSV 或 i-t 页面查看曲线" if route == "all" else unsupported_message(route)
@@ -202,20 +310,25 @@ class MainWindow:
         new_paths = tuple(path for path in discovered if not self.state.contains(path))
         duplicates = len(discovered) - len(new_paths)
         if duplicates:
-            self.log_panel.append(f"已忽略 {duplicates} 个重复路径。")
+            self._log(f"已忽略 {duplicates} 个重复路径。")
         if not new_paths:
-            self.log_panel.append("没有发现新的 .bin 文件。")
+            self._log("没有发现新的 .bin 文件。")
             return
+        workspace_id = self.workspace.workspace_id
+        self._running_workspace_id = workspace_id
         self._set_busy(True)
         self.progress.configure(maximum=len(new_paths), value=0)
-        self.log_panel.append(f"发现 {len(new_paths)} 个新文件，开始逐文件解析。")
+        self._log(f"发现 {len(new_paths)} 个新文件，开始逐文件解析。")
 
         def task(cancel_event, emit):
-            return self.controller.parse_many(
+            records = self.controller.parse_many(
                 new_paths,
-                progress=lambda index, total, path: emit((index, total, str(path))),
+                progress=lambda index, total, path: emit(
+                    (workspace_id, index, total, str(path))
+                ),
                 should_cancel=cancel_event.is_set,
             )
+            return workspace_id, records
 
         self.runner.submit(task)
 
@@ -229,43 +342,55 @@ class MainWindow:
 
     def _handle_worker_event(self, event: WorkerEvent) -> None:
         if event.kind == "progress":
-            index, total, path = event.payload
+            workspace_id, index, total, path = event.payload
+            session = self.workspace_manager.get(workspace_id)
+            workspace_name = session.name if session is not None else "已关闭工作区"
             self.progress.configure(maximum=total, value=index)
-            self.status_text.set(f"正在解析 {index}/{total}：{Path(path).name}")
+            self.status_text.set(
+                f"{workspace_name} 正在解析 {index}/{total}：{Path(path).name}"
+            )
         elif event.kind == "result":
-            records = tuple(event.payload)
-            self.state.add_records(records)
+            workspace_id, supplied_records = event.payload
+            records = tuple(supplied_records)
+            session = self.workspace_manager.get(workspace_id)
+            if session is None:
+                return
+            session.state.add_records(records)
             successful_routes = tuple(
                 dict.fromkeys(record.route for record in records if record.parse_success)
             )
-            if self.current_route == "all" and successful_routes:
-                # Mixed imports remain separated; show one technique page at a time.
-                preferred = "LSV" if "LSV" in successful_routes else successful_routes[0]
-                self._set_route(preferred)
-            else:
-                self._set_route(self.current_route)
-            summary = self.state.summary()
-            self.log_panel.append(
+            if session.current_route == "all" and successful_routes:
+                session.current_route = "LSV" if "LSV" in successful_routes else successful_routes[0]
+            summary = session.state.summary()
+            self._log(
                 f"导入完成：共 {summary.total} 个文件；解析成功 {summary.parsed}，"
                 f"失败 {summary.failed}，不支持 {summary.unsupported}；"
-                f"LSV {summary.lsv}，i-t {summary.it}。"
+                f"LSV {summary.lsv}，i-t {summary.it}。",
+                session=session,
             )
             for record in records:
                 if record.error_message:
-                    self.log_panel.append(f"{record.path.name}：{record.error_message}")
+                    self._log(f"{record.path.name}：{record.error_message}", session=session)
                 for warning in record.warning_messages:
-                    self.log_panel.append(f"{record.path.name} 警告：{warning}")
+                    self._log(f"{record.path.name} 警告：{warning}", session=session)
+            if session.workspace_id == self.workspace.workspace_id:
+                self._set_route(session.current_route)
         elif event.kind == "error":
-            self.log_panel.append(f"后台任务异常：{type(event.payload).__name__}：{event.payload}")
+            session = self.workspace_manager.get(self._running_workspace_id or "")
+            self._log(
+                f"后台任务异常：{type(event.payload).__name__}：{event.payload}",
+                session=session,
+            )
         elif event.kind == "finished":
+            self._running_workspace_id = None
             self._set_busy(False)
             self._update_status()
 
     def _record_selected(self, record: FileRecord | None) -> None:
         self.current_record = record
         self._render_parameters(record)
+        self.selected_by_route[self.current_route] = record.key if record is not None else None
         if self.current_route in {"LSV", "i-t"}:
-            self.selected_by_route[self.current_route] = record.key if record is not None else None
             collection = self.controller.build_preview_collection(
                 self.state.records,
                 experiment_type=self.current_route,
@@ -309,17 +434,15 @@ class MainWindow:
         if not selected:
             return
         count = self.state.remove([record.path for record in selected])
-        self.log_panel.append(f"已从列表移除 {count} 个文件；源文件未被修改。")
+        self._log(f"已从当前工作区移除 {count} 个文件；源文件未被修改。")
         self._set_route(self.current_route)
 
     def _clear(self) -> None:
         if not self.state.records:
             return
         if messagebox.askyesno("清空文件列表", "清空当前文件列表？不会删除磁盘上的源文件。", parent=self.root):
-            self.state.clear()
-            self.preview_display.reset_visibility()
-            self.selected_by_route = {"LSV": None, "i-t": None}
-            self.log_panel.append("文件列表已清空；源文件未被修改。")
+            self.workspace.clear_data()
+            self._log("当前工作区文件列表已清空；其他工作区和源文件未被修改。")
             self._set_route(self.current_route)
 
     def _show_details(self) -> None:
@@ -336,7 +459,7 @@ class MainWindow:
     def _update_status(self) -> None:
         summary = self.state.summary()
         self.status_text.set(
-            f"共 {summary.total} 个文件｜成功 {summary.parsed}｜失败 {summary.failed}｜"
+            f"{self.workspace.name}｜共 {summary.total} 个文件｜成功 {summary.parsed}｜失败 {summary.failed}｜"
             f"不支持 {summary.unsupported}｜LSV {summary.lsv}｜i-t {summary.it}"
         )
 

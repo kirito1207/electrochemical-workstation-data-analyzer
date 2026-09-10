@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.1.1
+# chi760e-h2o2-analyzer — Stage 5.1.2
 
-当前开发状态：**Stage 5.1.1（Windows 中文字体与多曲线原始数据预览加固）**。
+当前开发状态：**Stage 5.1.2（单窗口多工作区 GUI session 管理）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -215,6 +215,16 @@ LSV 与 i-t 页面现在分别自动叠加该 technique 下全部已成功解析
 右侧紧凑曲线列表使用 session 内稳定颜色显示文件名，并允许临时切换 preview visibility。颜色、选中和可见性都属于 GUI display state，不会改变原始数组、文件 membership、confirmed manifest、outlier/exclusion 或任何科研计算。移除和清空操作同步刷新 preview，但仍不删除磁盘文件。
 
 为避免超长 i-t 曲线拖慢屏幕刷新，preview 绘制超过 5000 点时使用均匀显示级 downsampling，并保留首末点；完整 `time_s`、`potential_V` 和 `current_A` 始终保留在 parser 对象中，正式 analysis 不使用 downsampled 数据。
+
+## Stage 5.1.2 Multi-workspace GUI
+
+单一 MainWindow 顶部提供浏览器式工作区标签：`[工作区 1 ×] [工作区 2 ×] [+]`。首次启动自动创建“工作区 1”；用户可以新建、切换、双击重命名和关闭工作区。关闭包含数据的工作区需要确认，只释放 GUI session state，绝不删除原始文件。当前暂不在程序重启后恢复 session。
+
+每个 Workspace 独立保存 imported/parsed file state、当前 technique 页面、每个页面的 selected file、preview visibility、稳定颜色映射和用户可见日志。切换标签会立即重载该工作区自己的文件表、曲线、曲线列表、参数和日志；移除及清空只作用于当前工作区。同一路径在单个工作区内去重，但允许在多个独立工作区中分别使用。
+
+后台解析任务携带创建任务时的 workspace ID；即使用户解析期间切换标签，结果仍只写回原工作区。正在执行解析任务的工作区在任务结束前不可关闭，避免产生失控 worker 或错误归属。
+
+**Workspace 与科研 Group 严格不同：**Workspace 是一批独立数据/分析会话，不参与统计定义；Group 是 Stage 5.2 confirmed manifest 中的科研分组。未来一个 Workspace 可以包含多个 Groups，GUI 不会把工作区名称自动转换为 Group。
 
 ## 安装与测试
 

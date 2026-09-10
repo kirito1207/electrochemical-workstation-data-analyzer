@@ -9,6 +9,7 @@ from .state import (
     PreviewData,
     PreviewDisplayState,
 )
+from .workspaces import WorkspaceManager, WorkspaceSession
 
 __version__ = "0.1.0"
 
@@ -20,4 +21,6 @@ __all__ = [
     "PreviewCollection",
     "PreviewData",
     "PreviewDisplayState",
+    "WorkspaceManager",
+    "WorkspaceSession",
 ]
