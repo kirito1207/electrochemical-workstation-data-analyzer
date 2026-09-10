@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.1
+# chi760e-h2o2-analyzer — Stage 5.1.1
 
-当前开发状态：**Stage 5.1（中文 GUI 基础、文件加载、parser routing 与原始数据预览）**。
+当前开发状态：**Stage 5.1.1（Windows 中文字体与多曲线原始数据预览加固）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -205,6 +205,16 @@ CV/CA 当前明确标记为尚未支持，不会路由到 LSV/i-t。Generic GUI 
 批量解析通过后台线程执行，worker 只向 thread-safe queue 写入事件，Tk widgets 始终由主线程更新。界面显示进度、批次计数和中文错误摘要，并允许查看技术异常名称与结构化 parser diagnostics。
 
 Stage 5.1 尚未提供 LSV 正式 metadata/statistics workflow，也未提供 i-t Step Protocol/calibration workflow；这些将在后续 GUI 阶段接入已有且经过测试的科研后端，不会在 GUI 中重新实现统计公式。
+
+## Stage 5.1.1 Windows preview / usability patch
+
+GUI 启动时会为 Matplotlib preview 配置系统字体：Windows 优先使用 `Microsoft YaHei`、`Microsoft YaHei UI` 或 `SimHei`，其他系统依次尝试已安装的 CJK 字体并安全回退到 `DejaVu Sans`。项目不捆绑字体文件；`axes.unicode_minus=False` 保证所选中文字体下负号仍可显示。
+
+LSV 与 i-t 页面现在分别自动叠加该 technique 下全部已成功解析的文件，不需要先点击表格。两种 technique 始终使用不同 preview collection，绝不混在同一坐标轴。表格选中项只改变曲线加粗/highlight 和右侧参数内容，不隐藏其他曲线。
+
+右侧紧凑曲线列表使用 session 内稳定颜色显示文件名，并允许临时切换 preview visibility。颜色、选中和可见性都属于 GUI display state，不会改变原始数组、文件 membership、confirmed manifest、outlier/exclusion 或任何科研计算。移除和清空操作同步刷新 preview，但仍不删除磁盘文件。
+
+为避免超长 i-t 曲线拖慢屏幕刷新，preview 绘制超过 5000 点时使用均匀显示级 downsampling，并保留首末点；完整 `time_s`、`potential_V` 和 `current_A` 始终保留在 parser 对象中，正式 analysis 不使用 downsampled 数据。
 
 ## 安装与测试
 

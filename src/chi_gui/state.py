@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import colorsys
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -61,6 +62,57 @@ class PreviewData:
         """Display conversion only; the parser's current_A remains untouched."""
 
         return self.current_A * 1e6
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewCurve:
+    record_key: str
+    file_name: str
+    data: PreviewData
+    color: str
+    visible: bool
+    selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class PreviewCollection:
+    experiment_type: str
+    curves: tuple[PreviewCurve, ...]
+    selected_key: str | None
+
+    @property
+    def visible_curves(self) -> tuple[PreviewCurve, ...]:
+        return tuple(curve for curve in self.curves if curve.visible)
+
+
+class PreviewDisplayState:
+    """Session-only colors and visibility, separate from analysis membership."""
+
+    def __init__(self) -> None:
+        self._colors: dict[str, str] = {}
+        self._hidden: set[str] = set()
+        self._next_color_index = 0
+
+    def color_for(self, key: str) -> str:
+        if key not in self._colors:
+            # Golden-ratio hue stepping gives stable, distinct colors for 42+ files.
+            hue = (0.08 + self._next_color_index * 0.618033988749895) % 1.0
+            red, green, blue = colorsys.hsv_to_rgb(hue, 0.68, 0.78)
+            self._colors[key] = f"#{round(red * 255):02x}{round(green * 255):02x}{round(blue * 255):02x}"
+            self._next_color_index += 1
+        return self._colors[key]
+
+    def is_visible(self, key: str) -> bool:
+        return key not in self._hidden
+
+    def set_visible(self, key: str, visible: bool) -> None:
+        if visible:
+            self._hidden.discard(key)
+        else:
+            self._hidden.add(key)
+
+    def reset_visibility(self) -> None:
+        self._hidden.clear()
 
 
 @dataclass(frozen=True, slots=True)

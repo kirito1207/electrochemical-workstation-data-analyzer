@@ -11,8 +11,8 @@ from .controller import GUIController, discover_bin_files
 from .dialogs import confirm_close_while_busy, show_record_details
 from .formatting import parameter_rows
 from .pages import IT_STAGE_MESSAGE, LSV_STAGE_MESSAGE, WELCOME_MESSAGE, unsupported_message
-from .state import AppState, FileRecord
-from .widgets import FileTable, LogPanel, PlotPreview
+from .state import AppState, FileRecord, PreviewDisplayState
+from .widgets import CurveList, FileTable, LogPanel, PlotPreview
 
 
 WINDOW_TITLE = "CHI760E 电化学数据分析工具"
@@ -23,9 +23,11 @@ class MainWindow:
         self.root = root
         self.controller = GUIController()
         self.state = AppState()
+        self.preview_display = PreviewDisplayState()
         self.runner = BackgroundRunner()
         self.current_route = "all"
         self.current_record: FileRecord | None = None
+        self.selected_by_route: dict[str, str | None] = {"LSV": None, "i-t": None}
         self._closing = False
 
         root.title(WINDOW_TITLE)
@@ -116,11 +118,14 @@ class MainWindow:
         info = ttk.Frame(lower)
         lower.add(info, weight=2)
         info.columnconfigure(0, weight=1)
-        info.rowconfigure(1, weight=1)
+        info.rowconfigure(0, weight=1)
+        info.rowconfigure(2, weight=1)
+        self.curve_list = CurveList(info, on_visibility_changed=self._visibility_changed)
+        self.curve_list.grid(row=0, column=0, sticky="nsew")
         self.parameter_box = ttk.LabelFrame(info, text="实验参数")
-        self.parameter_box.grid(row=0, column=0, sticky="ew")
+        self.parameter_box.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.log_panel = LogPanel(info)
-        self.log_panel.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        self.log_panel.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
 
         self.status_text = tk.StringVar(value="就绪")
         ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 4)).pack(
@@ -145,10 +150,38 @@ class MainWindow:
                 if item.experiment_type.upper() == route
             )
         self.file_table.set_records(records)
-        self.current_record = None
-        self._render_parameters(None)
-        self.plot_preview.clear("请选择一个解析成功的文件")
+        if route in {"LSV", "i-t"}:
+            self._render_technique_preview(route)
+        else:
+            self.current_record = None
+            self._render_parameters(None)
+            self.curve_list.set_collection(None)
+            self.plot_preview.clear(
+                "请选择 LSV 或 i-t 页面查看曲线" if route == "all" else unsupported_message(route)
+            )
         self._update_status()
+
+    def _render_technique_preview(self, experiment_type: str) -> None:
+        collection = self.controller.build_preview_collection(
+            self.state.records,
+            experiment_type=experiment_type,
+            display_state=self.preview_display,
+            selected_key=self.selected_by_route.get(experiment_type),
+        )
+        self.selected_by_route[experiment_type] = collection.selected_key
+        self.curve_list.set_collection(collection)
+        if collection.curves:
+            self.plot_preview.show_collection(collection)
+            selected = next(
+                record for record in self.state.records if record.key == collection.selected_key
+            )
+            self.current_record = selected
+            self._render_parameters(selected)
+            self.file_table.select_record(selected.key)
+        else:
+            self.current_record = None
+            self._render_parameters(None)
+            self.plot_preview.clear(f"当前没有已成功解析的 {experiment_type} 文件")
 
     def _choose_files(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -202,7 +235,15 @@ class MainWindow:
         elif event.kind == "result":
             records = tuple(event.payload)
             self.state.add_records(records)
-            self._set_route(self.current_route)
+            successful_routes = tuple(
+                dict.fromkeys(record.route for record in records if record.parse_success)
+            )
+            if self.current_route == "all" and successful_routes:
+                # Mixed imports remain separated; show one technique page at a time.
+                preferred = "LSV" if "LSV" in successful_routes else successful_routes[0]
+                self._set_route(preferred)
+            else:
+                self._set_route(self.current_route)
             summary = self.state.summary()
             self.log_panel.append(
                 f"导入完成：共 {summary.total} 个文件；解析成功 {summary.parsed}，"
@@ -223,13 +264,30 @@ class MainWindow:
     def _record_selected(self, record: FileRecord | None) -> None:
         self.current_record = record
         self._render_parameters(record)
-        if record is None:
-            self.plot_preview.clear("请选择单个文件")
-            return
-        if record.parse_success:
-            self.plot_preview.show_preview(self.controller.preview_for(record))
-        else:
-            self.plot_preview.clear(record.error_message or "该文件无法预览")
+        if self.current_route in {"LSV", "i-t"}:
+            self.selected_by_route[self.current_route] = record.key if record is not None else None
+            collection = self.controller.build_preview_collection(
+                self.state.records,
+                experiment_type=self.current_route,
+                display_state=self.preview_display,
+                selected_key=self.selected_by_route[self.current_route],
+            )
+            self.curve_list.set_collection(collection)
+            if collection.curves:
+                self.plot_preview.show_collection(collection)
+            else:
+                self.plot_preview.clear(f"当前没有已成功解析的 {self.current_route} 文件")
+
+    def _visibility_changed(self, record_key: str, visible: bool) -> None:
+        self.preview_display.set_visible(record_key, visible)
+        if self.current_route in {"LSV", "i-t"}:
+            collection = self.controller.build_preview_collection(
+                self.state.records,
+                experiment_type=self.current_route,
+                display_state=self.preview_display,
+                selected_key=self.selected_by_route[self.current_route],
+            )
+            self.plot_preview.show_collection(collection)
 
     def _render_parameters(self, record: FileRecord | None) -> None:
         for child in self.parameter_box.winfo_children():
@@ -259,6 +317,8 @@ class MainWindow:
             return
         if messagebox.askyesno("清空文件列表", "清空当前文件列表？不会删除磁盘上的源文件。", parent=self.root):
             self.state.clear()
+            self.preview_display.reset_visibility()
+            self.selected_by_route = {"LSV": None, "i-t": None}
             self.log_panel.append("文件列表已清空；源文件未被修改。")
             self._set_route(self.current_route)
 

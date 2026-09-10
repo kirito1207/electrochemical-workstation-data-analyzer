@@ -15,7 +15,15 @@ from chi_parser import (
     parse_file,
 )
 
-from .state import FileRecord, FileStatus, PreviewData, canonical_path
+from .state import (
+    FileRecord,
+    FileStatus,
+    PreviewCollection,
+    PreviewCurve,
+    PreviewData,
+    PreviewDisplayState,
+    canonical_path,
+)
 
 
 ProgressCallback = Callable[[int, int, Path], None]
@@ -139,4 +147,40 @@ class GUIController:
             )
         raise TechniqueRoutingError(
             f"No preview route for {record.data.experiment_type!r}."
+        )
+
+    def build_preview_collection(
+        self,
+        records: Iterable[FileRecord],
+        *,
+        experiment_type: str,
+        display_state: PreviewDisplayState,
+        selected_key: str | None = None,
+    ) -> PreviewCollection:
+        """Build one-technique preview; selection never changes membership."""
+
+        matching = tuple(
+            record
+            for record in records
+            if record.parse_success and record.experiment_type == experiment_type
+        )
+        matching_keys = {record.key for record in matching}
+        effective_selected = selected_key if selected_key in matching_keys else None
+        if effective_selected is None and matching:
+            effective_selected = matching[0].key
+        curves = tuple(
+            PreviewCurve(
+                record_key=record.key,
+                file_name=record.path.name,
+                data=self.preview_for(record),
+                color=display_state.color_for(record.key),
+                visible=display_state.is_visible(record.key),
+                selected=record.key == effective_selected,
+            )
+            for record in matching
+        )
+        return PreviewCollection(
+            experiment_type=experiment_type,
+            curves=curves,
+            selected_key=effective_selected,
         )

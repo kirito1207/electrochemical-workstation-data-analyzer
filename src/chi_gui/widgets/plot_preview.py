@@ -7,8 +7,21 @@ from tkinter import ttk
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
+import numpy as np
 
-from ..state import PreviewData
+from ..state import PreviewCollection
+
+
+MAX_PREVIEW_POINTS = 5000
+
+
+def downsample_for_display(x, y, *, max_points: int = MAX_PREVIEW_POINTS):
+    """Return display-only samples while preserving the full parser arrays."""
+
+    if len(x) <= max_points:
+        return x, y
+    indices = np.linspace(0, len(x) - 1, max_points, dtype=np.int64)
+    return x[indices], y[indices]
 
 
 class PlotPreview(ttk.LabelFrame):
@@ -26,12 +39,31 @@ class PlotPreview(ttk.LabelFrame):
         self.axis.set_axis_off()
         self.canvas.draw_idle()
 
-    def show_preview(self, preview: PreviewData) -> None:
+    def show_collection(self, collection: PreviewCollection) -> None:
         self.axis.clear()
         self.axis.set_axis_on()
-        self.axis.plot(preview.x, preview.current_uA, color="#1769aa", linewidth=1.1)
-        self.axis.set_xlabel(preview.x_label)
-        self.axis.set_ylabel(preview.y_label)
-        self.axis.set_title(f"{preview.experiment_type} — {preview.source_file.name}")
+        visible = collection.visible_curves
+        if not visible:
+            self.clear("当前页面没有可见曲线")
+            return
+        for curve in visible:
+            x, current_uA = downsample_for_display(curve.data.x, curve.data.current_uA)
+            self.axis.plot(
+                x,
+                current_uA,
+                color=curve.color,
+                linewidth=2.4 if curve.selected else 1.0,
+                alpha=1.0 if curve.selected else 0.72,
+                zorder=3 if curve.selected else 1,
+            )
+        exemplar = visible[0].data
+        self.axis.set_xlabel(exemplar.x_label)
+        self.axis.set_ylabel(exemplar.y_label)
+        self.axis.set_title(
+            f"{collection.experiment_type} 原始曲线预览（可见 {len(visible)}/{len(collection.curves)}）"
+        )
         self.axis.grid(True, alpha=0.22)
         self.canvas.draw_idle()
+
+
+__all__ = ["MAX_PREVIEW_POINTS", "PlotPreview", "downsample_for_display"]

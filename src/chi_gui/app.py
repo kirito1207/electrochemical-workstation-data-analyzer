@@ -5,9 +5,11 @@ from __future__ import annotations
 import tkinter as tk
 
 from .main_window import MainWindow
+from .matplotlib_config import configure_gui_matplotlib_fonts
 
 
 def create_application() -> tuple[tk.Tk, MainWindow]:
+    configure_gui_matplotlib_fonts()
     root = tk.Tk()
     window = MainWindow(root)
     return root, window

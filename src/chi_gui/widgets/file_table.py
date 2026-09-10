@@ -60,6 +60,14 @@ class FileTable(ttk.Frame):
     def selected_records(self) -> tuple[FileRecord, ...]:
         return tuple(self._records[item] for item in self.tree.selection() if item in self._records)
 
+    def select_record(self, key: str | None) -> None:
+        if key is None or key not in self._records:
+            self.tree.selection_remove(self.tree.selection())
+            return
+        self.tree.selection_set(key)
+        self.tree.focus(key)
+        self.tree.see(key)
+
     def _selection_changed(self, _event: tk.Event) -> None:
         selected = self.selected_records()
         self._on_select(selected[0] if len(selected) == 1 else None)
