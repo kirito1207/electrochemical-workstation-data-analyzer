@@ -1,29 +1,27 @@
-"""Configurable, traceable LSV analysis built on validated CHI parser output."""
+"""Technique-aware analysis APIs without experiment-preset dependencies.
+
+PB42 names remain available through lazy compatibility lookup, but they are
+not imported by Generic LSV or i-t analysis. New PB42 callers should import
+from :mod:`presets.pb42` explicitly.
+"""
+
+from importlib import import_module
+from typing import Any
 
 from .descriptive import DescriptiveStatistics, describe_values
 from .lsv_analysis import (
     AnalysisSettings,
     LSVAnalysisResult,
     PotentialGridMismatchError,
-    analyze_lsv_files,
     analyze_lsv_with_manifest,
-    run_lsv_analysis,
     run_lsv_analysis_with_manifest,
-)
-from .lsv_templates import (
-    CURRENT_PB_42_TEMPLATE,
-    GroupDesign,
-    PB42ExperimentTemplate,
 )
 from .metadata import (
     ExperimentManifest,
     ManifestEntry,
     MetadataResolutionError,
     confirmed_generic_manifest,
-    infer_current_pb42_manifest,
-    infer_experiment_manifest,
     suggest_generic_manifest,
-    validate_current_pb42_design,
     validate_generic_manifest,
 )
 from .outliers import OutlierFlag, flag_mad_outliers
@@ -44,6 +42,11 @@ from .statistics import (
     compare_defined_groups,
     compare_groups,
     holm_adjust,
+)
+from .techniques import (
+    TechniqueRoute,
+    TechniqueRoutingError,
+    route_for_experiment_type,
 )
 from .it_analysis import (
     ITAnalysisInput,
@@ -92,8 +95,6 @@ __all__ = [
     "DEFAULT_SIGN_ZERO_TOLERANCE_A",
     "DescriptiveStatistics",
     "ExperimentManifest",
-    "CURRENT_PB_42_TEMPLATE",
-    "GroupDesign",
     "LSVAnalysisResult",
     "ITAnalysisInput",
     "ITAnalysisRun",
@@ -116,14 +117,12 @@ __all__ = [
     "PlateauResult",
     "PotentialGridMismatchError",
     "PotentialOutOfRangeError",
-    "PB42ExperimentTemplate",
     "StepDefinition",
     "StepProtocol",
     "StepProtocolError",
     "analyze_it_batch",
     "analyze_it_data",
     "analyze_it_file",
-    "analyze_lsv_files",
     "analyze_lsv_with_manifest",
     "compare_defined_groups",
     "compare_groups",
@@ -137,17 +136,36 @@ __all__ = [
     "fit_calibration",
     "fit_group_mean_calibration",
     "holm_adjust",
-    "infer_experiment_manifest",
-    "infer_current_pb42_manifest",
     "suggest_generic_manifest",
     "confirmed_generic_manifest",
     "define_intervals",
     "evaluate_delta_direction",
-    "run_lsv_analysis",
     "run_lsv_analysis_with_manifest",
     "run_it_analysis",
     "suggest_addition_times",
     "summarize_concentrations",
-    "validate_current_pb42_design",
     "validate_generic_manifest",
+    "TechniqueRoute",
+    "TechniqueRoutingError",
+    "route_for_experiment_type",
 ]
+
+
+_LEGACY_PB42_EXPORTS = {
+    "CURRENT_PB_42_TEMPLATE",
+    "GroupDesign",
+    "PB42ExperimentTemplate",
+    "analyze_lsv_files",
+    "infer_current_pb42_manifest",
+    "infer_experiment_manifest",
+    "run_lsv_analysis",
+    "validate_current_pb42_design",
+}
+
+
+def __getattr__(name: str) -> Any:
+    """Resolve legacy PB42 package-level names without an eager dependency."""
+
+    if name in _LEGACY_PB42_EXPORTS:
+        return getattr(import_module("presets.pb42"), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

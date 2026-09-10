@@ -134,81 +134,6 @@ def _relative(path: Path, root: Path) -> str:
         return path.name
 
 
-def infer_current_pb42_manifest(
-    paths: Iterable[str | Path], *, root: str | Path
-) -> ExperimentManifest:
-    """Infer A/B/C and Bare/Material, then enforce the complete study design."""
-
-    root_path = Path(root)
-    path_objects = tuple(Path(supplied) for supplied in paths)
-    relative_paths = tuple(_relative(path, root_path) for path in path_objects)
-    folder_groups: dict[str, set[Group]] = {}
-    for relative_path in relative_paths:
-        inferred = _infer_group(relative_path)
-        if inferred is not None:
-            folder_groups.setdefault(str(Path(relative_path).parent), set()).add(inferred)
-
-    entries: list[ManifestEntry] = []
-    errors: list[str] = []
-    for path, relative_path in zip(path_objects, relative_paths, strict=True):
-        group = _infer_group(relative_path)
-        if group is None:
-            inherited = folder_groups.get(str(Path(relative_path).parent), set())
-            if len(inherited) == 1:
-                group = next(iter(inherited))
-        electrode_type = _infer_electrode_type(path.name)
-        match = SAMPLE_ID_PATTERN.search(path.name)
-        sample_id = match.group(1).upper() if match else None
-        entry = ManifestEntry(
-            file_name=path.name,
-            relative_path=relative_path,
-            group=group,
-            electrode_type=electrode_type,
-            sample_id=sample_id,
-            file_path=str(path),
-        )
-        entries.append(entry)
-        unresolved = [
-            name
-            for name, value in (
-                ("group", group),
-                ("electrode_type", electrode_type),
-                ("sample_id", sample_id),
-            )
-            if value is None
-        ]
-        if unresolved:
-            errors.append(f"{relative_path}: unresolved {', '.join(unresolved)}")
-
-    if len(entries) != 42:
-        errors.append(f"Expected 42 files, found {len(entries)}")
-
-    for group in ("A", "B", "C"):
-        group_entries = [item for item in entries if item.group == group]
-        bare = [item for item in group_entries if item.electrode_type == "Bare"]
-        material = [item for item in group_entries if item.electrode_type == "Material"]
-        if len(group_entries) != 14 or len(bare) != 1 or len(material) != 13:
-            errors.append(
-                f"Group {group}: expected 14 total (1 Bare, 13 Material), found "
-                f"{len(group_entries)} total ({len(bare)} Bare, {len(material)} Material)"
-            )
-        sample_ids = [item.sample_id for item in group_entries if item.sample_id is not None]
-        if len(sample_ids) != len(set(sample_ids)):
-            errors.append(f"Group {group}: duplicate sample_id")
-
-    manifest_paths = [item.relative_path for item in entries]
-    if len(manifest_paths) != len(set(manifest_paths)):
-        errors.append("Manifest contains duplicate relative_path values")
-
-    return ExperimentManifest(
-        entries=tuple(entries),
-        errors=tuple(errors),
-        user_confirmed=not errors,
-        source="PB42 directory and filename inference with strict design validation",
-        template_name="CURRENT_PB_42_TEMPLATE",
-    )
-
-
 def suggest_generic_manifest(
     paths: Iterable[str | Path], *, root: str | Path
 ) -> ExperimentManifest:
@@ -237,36 +162,6 @@ def suggest_generic_manifest(
     )
 
 
-def validate_current_pb42_design(manifest: ExperimentManifest) -> None:
-    """Reject any manifest that does not match the validated 42-file PB study."""
-
-    manifest.require_valid()
-    errors: list[str] = []
-    if len(manifest.entries) != 42:
-        errors.append(f"Expected 42 files, found {len(manifest.entries)}")
-    for group in ("A", "B", "C"):
-        rows = [entry for entry in manifest.entries if entry.group == group]
-        bare = sum(entry.electrode_type == "Bare" for entry in rows)
-        material = sum(entry.electrode_type == "Material" for entry in rows)
-        if len(rows) != 14 or bare != 1 or material != 13:
-            errors.append(
-                f"Group {group}: expected 14 total (1 Bare, 13 Material), found "
-                f"{len(rows)} total ({bare} Bare, {material} Material)"
-            )
-    if {entry.group for entry in manifest.entries} != {"A", "B", "C"}:
-        errors.append("PB42 groups must be exactly A, B and C")
-    if errors:
-        raise MetadataResolutionError(tuple(errors))
-
-
-def infer_experiment_manifest(
-    paths: Iterable[str | Path], *, root: str | Path
-) -> ExperimentManifest:
-    """Backward-compatible alias for strict current PB42 inference."""
-
-    return infer_current_pb42_manifest(paths, root=root)
-
-
 __all__ = [
     "ElectrodeType",
     "ExperimentManifest",
@@ -274,9 +169,6 @@ __all__ = [
     "ManifestEntry",
     "MetadataResolutionError",
     "confirmed_generic_manifest",
-    "infer_current_pb42_manifest",
-    "infer_experiment_manifest",
     "suggest_generic_manifest",
-    "validate_current_pb42_design",
     "validate_generic_manifest",
 ]

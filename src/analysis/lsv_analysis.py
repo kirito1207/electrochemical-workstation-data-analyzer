@@ -12,12 +12,9 @@ import numpy as np
 from chi_parser import LSVData, parse_lsv
 
 from .descriptive import DescriptiveStatistics, describe_values
-from .lsv_templates import CURRENT_PB_42_TEMPLATE
 from .metadata import (
     ExperimentManifest,
     ManifestEntry,
-    infer_current_pb42_manifest,
-    validate_current_pb42_design,
     validate_generic_manifest,
 )
 from .outliers import OutlierFlag, flag_mad_outliers
@@ -260,25 +257,6 @@ def analyze_lsv_with_manifest(
     )
 
 
-def analyze_lsv_files(
-    paths: Sequence[str | Path],
-    *,
-    root: str | Path,
-    settings: AnalysisSettings | None = None,
-) -> LSVAnalysisResult:
-    """Backward-compatible strict entry point for the current PB42 study."""
-
-    path_objects = tuple(Path(path) for path in paths)
-    manifest = infer_current_pb42_manifest(path_objects, root=root)
-    validate_current_pb42_design(manifest)
-    return analyze_lsv_with_manifest(
-        manifest,
-        comparisons=CURRENT_PB_42_TEMPLATE.comparisons,
-        settings=settings,
-        group_order=CURRENT_PB_42_TEMPLATE.group_order,
-    )
-
-
 def _allocate_output_directory(base: Path, timestamp: str) -> Path:
     parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     stem = parsed.strftime("%Y%m%d_%H%M%S")
@@ -289,38 +267,6 @@ def _allocate_output_directory(base: Path, timestamp: str) -> Path:
         suffix += 1
     candidate.mkdir(parents=True)
     return candidate
-
-
-def run_lsv_analysis(
-    input_root: str | Path,
-    *,
-    output_base: str | Path = "results",
-    settings: AnalysisSettings | None = None,
-) -> AnalysisRun:
-    """Run analysis and export a new, non-overwriting result directory."""
-
-    root = Path(input_root)
-    paths = sorted(root.rglob("*.bin"))
-    result = analyze_lsv_files(paths, root=root, settings=settings)
-    output = _allocate_output_directory(Path(output_base), result.settings.analysis_timestamp or "")
-
-    from export.csv import export_csv_bundle
-    from export.excel import export_analysis_workbook
-    from export.logging import export_analysis_settings
-    from plotting.lsv_mean import plot_mean_lsv
-    from plotting.lsv_raw import plot_raw_lsv
-    from plotting.repeatability import plot_repeatability
-    from plotting.selected_potential import plot_selected_potential
-
-    generated: list[Path] = []
-    generated.extend(export_csv_bundle(result, output / "LSV" / "csv"))
-    generated.append(export_analysis_workbook(result, output / "LSV" / "excel" / "LSV_analysis.xlsx"))
-    generated.append(export_analysis_settings(result, output / "LSV" / "logs" / "analysis_settings.json"))
-    generated.extend(plot_raw_lsv(result, output / "LSV" / "raw_curves"))
-    generated.extend(plot_mean_lsv(result, output / "LSV" / "mean_curves"))
-    generated.extend(plot_selected_potential(result, output / "LSV" / "selected_potential"))
-    generated.extend(plot_repeatability(result, output / "LSV" / "repeatability"))
-    return AnalysisRun(result=result, output_directory=output, generated_files=tuple(generated))
 
 
 def run_lsv_analysis_with_manifest(
@@ -374,9 +320,7 @@ __all__ = [
     "GroupSummary",
     "LSVAnalysisResult",
     "PotentialGridMismatchError",
-    "analyze_lsv_files",
     "analyze_lsv_with_manifest",
-    "run_lsv_analysis",
     "run_lsv_analysis_with_manifest",
     "validate_common_potential_grid",
 ]

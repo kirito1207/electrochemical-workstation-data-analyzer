@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer
+# chi760e-h2o2-analyzer — Stage 4.6
 
-当前开发状态：**Stage 3（parser v0.1 + 可配置 LSV 批量统计分析）**。
+当前开发状态：**Stage 4.6（可选 PB42 preset 隔离 + technique-specific routing）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -54,10 +54,11 @@ parser、analysis、plotting、export 和未来 GUI 保持职责分离。
 
 ## Stage 3 LSV 分析
 
-`run_lsv_analysis()` 对已确认的 42 文件实验设计执行完整且可追踪的分析。分析电位不是固定值；默认 `0.000 V`，也可由调用方设置为扫描范围内的任意电位。精确采样点直接读取，非采样电位使用左右相邻真实点线性插值，禁止外推。
+PB42 preset 的 `run_lsv_analysis()` 对已确认的 42 文件实验设计执行完整且可追踪的分析。分析电位不是固定值；默认 `0.000 V`，也可由调用方设置为扫描范围内的任意电位。精确采样点直接读取，非采样电位使用左右相邻真实点线性插值，禁止外推。
 
 ```python
-from analysis import AnalysisSettings, run_lsv_analysis
+from analysis import AnalysisSettings
+from presets.pb42 import run_lsv_analysis
 
 run = run_lsv_analysis(
     "/path/to/42_lsv_files",
@@ -131,7 +132,7 @@ Stage 4 不包含 GUI、Windows exe、机器学习或 CV/CA parser。
 
 ## Stage 4.5 LSV 通用实验模式
 
-当前 42 文件实验由 `CURRENT_PB_42_TEMPLATE` 明确定义。旧入口 `analyze_lsv_files()` 仍执行目录/文件名识别、A/B/C 严格设计校验、每组 `1 Bare + 13 Material`、A-B/B-C primary comparisons 和 A-C exploratory comparison。该兼容入口继续复现 Stage 3/3.1 的数值结果。
+当前 42 文件实验由可选模块 `presets.pb42` 中的 `CURRENT_PB_42_TEMPLATE` 明确定义。PB42 入口 `analyze_lsv_files()` 仍执行目录/文件名识别、A/B/C 严格设计校验、每组 `1 Bare + 13 Material`、A-B/B-C primary comparisons 和 A-C exploratory comparison。该 preset 继续复现 Stage 3/3.1 的数值结果。
 
 新的 Generic LSV Mode 不限定 group 名称、组数、每组 Material 数量或 Bare 是否存在。正式分析接收不可变且由用户确认的 `ExperimentManifest`；自动识别结果只能作为 GUI metadata table 的初始建议，不能绕过用户确认直接统计。
 
@@ -178,6 +179,14 @@ result = analyze_lsv_with_manifest(
 Generic Mode 只执行用户声明的 comparisons，不自动进行全组两两比较。Holm adjustment 仅在相同 `holm_family` 中声明的 primary Welch comparisons 之间进行。Bare 保留在逐文件数据和原始曲线中，但不进入 Material 描述统计、outlier QC 或显著性检验。已有的 signed/magnitude、插值、MAD 标记和 current sign QC 科研规则保持不变。
 
 GUI 预留流程为：选择文件 → parser → metadata 建议表 → 用户编辑 → 用户确认 manifest → 设置分析电位和 comparisons → 正式分析。i-t GUI 应自动生成 baseline row：`concentration = 0 µM`，`addition_time = ITData.actual_first_time_s`；用户只输入非零浓度的真实加样时刻。Stage 4.5 不实现 GUI。
+
+## Stage 4.6 可选 preset 与 technique 扩展
+
+Generic LSV core 不导入 `presets.pb42`，也不依赖 PB42 的组名、样本数、文件名或 comparison 定义。新代码应显式从 `presets.pb42` 导入 PB42 功能；未来删除该 preset 不需要修改 `analyze_lsv_with_manifest()` 或 `run_lsv_analysis_with_manifest()`。
+
+`infer_experiment_manifest()` 仅作为 backward-compatible、PB42-specific legacy alias 保留，并会产生 deprecation warning。README 不把它作为 Generic Mode 入口，未来 Generic GUI 也不得调用它；推荐流程始终是 `suggest_generic_manifest()` → 用户核对和编辑 → `confirmed_generic_manifest()`。
+
+`route_for_experiment_type()` 为未来 GUI 提供小型 technique routing contract：当前只路由 LSV 和 i-t。CV 与 CA 尚未实现，不能被强行送入 LSV 分析。未来 CV/CA 可以复用 generic metadata、通用统计、export 和 plotting utilities，但必须有 technique-specific parser 与 analysis logic。尤其 CV 中同一 potential 可在不同 cycle、segment 和 sweep direction 重复出现，因此未来 current-at-potential API 必须显式区分这些维度，不能复用 LSV 的单调电位轴假设。
 
 ## 安装与测试
 
