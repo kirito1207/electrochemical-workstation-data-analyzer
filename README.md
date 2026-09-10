@@ -129,6 +129,56 @@ run_it_analysis(
 
 Stage 4 不包含 GUI、Windows exe、机器学习或 CV/CA parser。
 
+## Stage 4.5 LSV 通用实验模式
+
+当前 42 文件实验由 `CURRENT_PB_42_TEMPLATE` 明确定义。旧入口 `analyze_lsv_files()` 仍执行目录/文件名识别、A/B/C 严格设计校验、每组 `1 Bare + 13 Material`、A-B/B-C primary comparisons 和 A-C exploratory comparison。该兼容入口继续复现 Stage 3/3.1 的数值结果。
+
+新的 Generic LSV Mode 不限定 group 名称、组数、每组 Material 数量或 Bare 是否存在。正式分析接收不可变且由用户确认的 `ExperimentManifest`；自动识别结果只能作为 GUI metadata table 的初始建议，不能绕过用户确认直接统计。
+
+```python
+from analysis import (
+    AnalysisSettings,
+    ComparisonDefinition,
+    ManifestEntry,
+    confirmed_generic_manifest,
+    analyze_lsv_with_manifest,
+)
+
+manifest = confirmed_generic_manifest(
+    [
+        ManifestEntry(
+            file_name="electrode_01.bin",
+            relative_path="Control/electrode_01.bin",
+            group="Control",
+            electrode_type="Material",
+            sample_id="C01",
+            file_path="/data/Control/electrode_01.bin",
+        ),
+        # 其余经用户核对的文件……
+    ],
+    source="GUI metadata table confirmation",
+)
+
+comparisons = (
+    ComparisonDefinition(
+        left_group="Control",
+        right_group="PB10",
+        role="primary: prespecified treatment comparison",
+        holm_family="primary_efficacy",
+    ),
+)
+
+result = analyze_lsv_with_manifest(
+    manifest,
+    comparisons=comparisons,
+    settings=AnalysisSettings(target_potential_V=-0.050),
+)
+```
+
+Generic Mode 只执行用户声明的 comparisons，不自动进行全组两两比较。Holm adjustment 仅在相同 `holm_family` 中声明的 primary Welch comparisons 之间进行。Bare 保留在逐文件数据和原始曲线中，但不进入 Material 描述统计、outlier QC 或显著性检验。已有的 signed/magnitude、插值、MAD 标记和 current sign QC 科研规则保持不变。
+
+GUI 预留流程为：选择文件 → parser → metadata 建议表 → 用户编辑 → 用户确认 manifest → 设置分析电位和 comparisons → 正式分析。i-t GUI 应自动生成 baseline row：`concentration = 0 µM`，`addition_time = ITData.actual_first_time_s`；用户只输入非零浓度的真实加样时刻。Stage 4.5 不实现 GUI。
+
 ## 安装与测试
 
 ```bash

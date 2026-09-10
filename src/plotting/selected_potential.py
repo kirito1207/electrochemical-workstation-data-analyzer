@@ -10,7 +10,7 @@ import numpy as np
 from analysis.lsv_analysis import LSVAnalysisResult
 from export.figures import save_figure_formats
 
-from .common import GROUP_COLORS, new_figure, potential_label, style_axes
+from .common import colors_for_groups, new_figure, potential_label, style_axes
 
 
 def _values(result: LSVAnalysisResult, group: str, metric: str) -> np.ndarray:
@@ -28,25 +28,25 @@ def _values(result: LSVAnalysisResult, group: str, metric: str) -> np.ndarray:
     )
 
 
-def _adjusted_primary(result: LSVAnalysisResult, comparison: str) -> float:
-    adjusted = next(
-        item.holm_adjusted_p
+def _adjusted_primary_lines(result: LSVAnalysisResult) -> tuple[str, ...]:
+    return tuple(
+        f"Welch + Holm ({item.holm_family}): {item.comparison} adjusted p = {item.holm_adjusted_p:.4g}"
         for item in result.comparisons
-        if item.comparison == comparison and item.test == "Welch independent-samples t-test"
+        if item.test == "Welch independent-samples t-test"
+        and item.holm_adjusted_p is not None
     )
-    if adjusted is None:
-        raise ValueError(f"Missing Holm-adjusted p value for primary comparison {comparison}.")
-    return adjusted
 
 
 def plot_selected_potential(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Path, ...]:
     output = Path(output_dir)
     target_text = potential_label(result.settings.target_potential_V)
     generated: list[Path] = []
+    groups = result.groups
+    colors = colors_for_groups(groups)
     for metric in ("magnitude", "signed"):
         figure, axis = new_figure(width=5.7, height=4.7)
         all_values: list[float] = []
-        for position, group in enumerate(("A", "B", "C")):
+        for position, group in enumerate(groups):
             values = _values(result, group, metric)
             all_values.extend(values)
             jitter = np.linspace(-0.12, 0.12, len(values))
@@ -54,7 +54,7 @@ def plot_selected_potential(result: LSVAnalysisResult, output_dir: str | Path) -
                 np.full(len(values), position) + jitter,
                 values,
                 s=26,
-                color=GROUP_COLORS[group],
+                color=colors[group],
                 alpha=0.82,
                 edgecolor="white",
                 linewidth=0.45,
@@ -76,21 +76,17 @@ def plot_selected_potential(result: LSVAnalysisResult, output_dir: str | Path) -
         axis.set(
             xlabel="Group",
             ylabel=("Absolute current magnitude / µA" if metric == "magnitude" else "Signed current / µA"),
-            xticks=(0, 1, 2),
-            xticklabels=("A", "B", "C"),
-            xlim=(-0.45, 2.45),
+            xticks=tuple(range(len(groups))),
+            xticklabels=groups,
+            xlim=(-0.45, len(groups) - 0.55),
         )
-        axis.set_title(f"{title_prefix} at {target_text} V", pad=35)
-        axis.text(
-            0.5,
-            1.01,
-            f"Welch + Holm: A–B adjusted p = {_adjusted_primary(result, 'A-B'):.4g}\n"
-            f"Welch + Holm: B–C adjusted p = {_adjusted_primary(result, 'B-C'):.4g}",
-            transform=axis.transAxes,
-            va="bottom",
-            ha="center",
-            fontsize=8,
-        )
+        lines = _adjusted_primary_lines(result)
+        axis.set_title(f"{title_prefix} at {target_text} V", pad=35 if lines else 8)
+        if lines:
+            axis.text(
+                0.5, 1.01, "\n".join(lines), transform=axis.transAxes,
+                va="bottom", ha="center", fontsize=8,
+            )
         style_axes(axis)
         generated.extend(save_figure_formats(figure, output / f"selected_{metric}_{target_text.replace('-', 'minus').replace('.', 'p')}V"))
         plt.close(figure)

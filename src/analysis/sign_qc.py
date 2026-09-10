@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Iterable
 
 import numpy as np
 
 
-GroupLabel = Literal["A", "B", "C", "ALL"]
+GroupLabel = str
 DEFAULT_SIGN_ZERO_TOLERANCE_A = 1e-12
 MIXED_SIGN_WARNING = (
     "Selected-potential currents contain mixed signs. "

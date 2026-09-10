@@ -14,10 +14,17 @@ def export_analysis_settings(result: LSVAnalysisResult, path: str | Path) -> Pat
     output.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "settings": asdict(result.settings),
+        "manifest": {
+            "user_confirmed": result.manifest.user_confirmed,
+            "source": result.manifest.source,
+            "template_name": result.manifest.template_name,
+        },
         "statistical_methods": {
             "primary_test": "Welch independent-samples t-test",
             "sensitivity_test": "Mann-Whitney U, two-sided",
-            "multiple_comparison": "Holm adjustment for A-B and B-C Welch p values",
+            "multiple_comparison": (
+                "Holm adjustment only within explicitly declared primary families"
+            ),
             "effect_size": "Hedges' g with percentile bootstrap 95% CI",
             "mean_difference_ci": "percentile bootstrap 95% CI",
             "outliers": result.settings.outlier_method,
@@ -33,6 +40,7 @@ def export_analysis_settings(result: LSVAnalysisResult, path: str | Path) -> Pat
                 "group": item.manifest.group,
                 "electrode_type": item.manifest.electrode_type,
                 "sample_id": item.manifest.sample_id,
+                "file_path": item.manifest.file_path,
             }
             for item in result.files
         ],

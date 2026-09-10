@@ -12,11 +12,22 @@ import numpy as np
 from chi_parser import LSVData, parse_lsv
 
 from .descriptive import DescriptiveStatistics, describe_values
-from .metadata import ExperimentManifest, ManifestEntry, infer_experiment_manifest
+from .lsv_templates import CURRENT_PB_42_TEMPLATE
+from .metadata import (
+    ExperimentManifest,
+    ManifestEntry,
+    infer_current_pb42_manifest,
+    validate_current_pb42_design,
+    validate_generic_manifest,
+)
 from .outliers import OutlierFlag, flag_mad_outliers
 from .potential import CurrentAtPotential, extract_current_at_potential
 from .sign_qc import CurrentSignQC, evaluate_current_signs
-from .statistics import ComparisonResult, compare_groups
+from .statistics import (
+    ComparisonDefinition,
+    ComparisonResult,
+    compare_defined_groups,
+)
 
 
 AnalysisMetric = Literal["magnitude", "signed"]
@@ -82,6 +93,10 @@ class LSVAnalysisResult:
             if item.group == group and item.analysis_metric == metric
         )
 
+    @property
+    def groups(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(item.group for item in self.group_summaries))
+
 
 @dataclass(frozen=True, slots=True)
 class AnalysisRun:
@@ -117,18 +132,27 @@ def _metric_value(item: AnalyzedLSVFile, metric: AnalysisMetric) -> float:
     )
 
 
-def analyze_lsv_files(
-    paths: Sequence[str | Path],
+def _entry_path(entry: ManifestEntry, root: str | Path | None) -> Path:
+    if entry.file_path:
+        return Path(entry.file_path)
+    if root is not None:
+        return Path(root) / entry.relative_path
+    return Path(entry.relative_path)
+
+
+def analyze_lsv_with_manifest(
+    manifest: ExperimentManifest,
     *,
-    root: str | Path,
+    comparisons: Sequence[ComparisonDefinition] = (),
+    root: str | Path | None = None,
     settings: AnalysisSettings | None = None,
+    group_order: Sequence[str] | None = None,
 ) -> LSVAnalysisResult:
-    """Parse, classify, extract and analyze a confirmed 42-file LSV experiment."""
+    """Analyze exactly the user-confirmed metadata and declared comparisons."""
 
     resolved = (settings or AnalysisSettings()).resolved()
-    path_objects = tuple(Path(path) for path in paths)
-    manifest = infer_experiment_manifest(path_objects, root=root)
-    manifest.require_valid()
+    validate_generic_manifest(manifest)
+    path_objects = tuple(_entry_path(entry, root) for entry in manifest.entries)
 
     parsed = tuple(parse_lsv(path) for path in path_objects)
     validate_common_potential_grid(parsed)
@@ -146,14 +170,24 @@ def analyze_lsv_files(
     outlier_flags: list[OutlierFlag] = []
     current_sign_qc: list[CurrentSignQC] = []
     all_material_currents_A: list[float] = []
-    for group in ("A", "B", "C"):
+    material_groups = tuple(
+        dict.fromkeys(
+            entry.group
+            for entry in manifest.entries
+            if entry.electrode_type == "Material" and entry.group is not None
+        )
+    )
+    groups = tuple(group_order) if group_order is not None else material_groups
+    if set(groups) != set(material_groups) or len(groups) != len(set(groups)):
+        raise ValueError("group_order must contain every Material group exactly once.")
+    for group in groups:
         material = [
             item
             for item in analyzed
             if item.manifest.group == group and item.manifest.electrode_type == "Material"
         ]
-        if len(material) != 13:
-            raise ValueError(f"Group {group} does not contain exactly 13 Material electrodes.")
+        if not material:
+            raise ValueError(f"Group {group} contains no Material electrodes.")
         signed_currents_A = [item.selected.current_A for item in material]
         all_material_currents_A.extend(signed_currents_A)
         current_sign_qc.append(
@@ -208,8 +242,9 @@ def analyze_lsv_files(
         if item.group != "ALL" and item.warning
     )
 
-    comparisons = compare_groups(
+    comparison_results = compare_defined_groups(
         grouped_primary,
+        comparisons,
         bootstrap_seed=resolved.bootstrap_seed,
         bootstrap_resamples=resolved.bootstrap_resamples,
     )
@@ -218,10 +253,29 @@ def analyze_lsv_files(
         manifest=manifest,
         files=analyzed,
         group_summaries=tuple(group_summaries),
-        comparisons=comparisons,
+        comparisons=comparison_results,
         outlier_flags=tuple(outlier_flags),
         current_sign_qc=tuple(current_sign_qc),
         warnings=warnings,
+    )
+
+
+def analyze_lsv_files(
+    paths: Sequence[str | Path],
+    *,
+    root: str | Path,
+    settings: AnalysisSettings | None = None,
+) -> LSVAnalysisResult:
+    """Backward-compatible strict entry point for the current PB42 study."""
+
+    path_objects = tuple(Path(path) for path in paths)
+    manifest = infer_current_pb42_manifest(path_objects, root=root)
+    validate_current_pb42_design(manifest)
+    return analyze_lsv_with_manifest(
+        manifest,
+        comparisons=CURRENT_PB_42_TEMPLATE.comparisons,
+        settings=settings,
+        group_order=CURRENT_PB_42_TEMPLATE.group_order,
     )
 
 
@@ -267,3 +321,62 @@ def run_lsv_analysis(
     generated.extend(plot_selected_potential(result, output / "LSV" / "selected_potential"))
     generated.extend(plot_repeatability(result, output / "LSV" / "repeatability"))
     return AnalysisRun(result=result, output_directory=output, generated_files=tuple(generated))
+
+
+def run_lsv_analysis_with_manifest(
+    manifest: ExperimentManifest,
+    *,
+    comparisons: Sequence[ComparisonDefinition] = (),
+    root: str | Path | None = None,
+    output_base: str | Path = "results",
+    settings: AnalysisSettings | None = None,
+) -> AnalysisRun:
+    """Run Generic Mode after the GUI or caller confirms all metadata."""
+
+    result = analyze_lsv_with_manifest(
+        manifest,
+        comparisons=comparisons,
+        root=root,
+        settings=settings,
+    )
+    output = _allocate_output_directory(
+        Path(output_base), result.settings.analysis_timestamp or ""
+    )
+
+    from export.csv import export_csv_bundle
+    from export.excel import export_analysis_workbook
+    from export.logging import export_analysis_settings
+    from plotting.lsv_mean import plot_mean_lsv
+    from plotting.lsv_raw import plot_raw_lsv
+    from plotting.repeatability import plot_repeatability
+    from plotting.selected_potential import plot_selected_potential
+
+    generated: list[Path] = []
+    generated.extend(export_csv_bundle(result, output / "LSV" / "csv"))
+    generated.append(
+        export_analysis_workbook(result, output / "LSV" / "excel" / "LSV_analysis.xlsx")
+    )
+    generated.append(
+        export_analysis_settings(result, output / "LSV" / "logs" / "analysis_settings.json")
+    )
+    generated.extend(plot_raw_lsv(result, output / "LSV" / "raw_curves"))
+    generated.extend(plot_mean_lsv(result, output / "LSV" / "mean_curves"))
+    generated.extend(plot_selected_potential(result, output / "LSV" / "selected_potential"))
+    generated.extend(plot_repeatability(result, output / "LSV" / "repeatability"))
+    return AnalysisRun(result=result, output_directory=output, generated_files=tuple(generated))
+
+
+__all__ = [
+    "AnalysisMetric",
+    "AnalysisRun",
+    "AnalysisSettings",
+    "AnalyzedLSVFile",
+    "GroupSummary",
+    "LSVAnalysisResult",
+    "PotentialGridMismatchError",
+    "analyze_lsv_files",
+    "analyze_lsv_with_manifest",
+    "run_lsv_analysis",
+    "run_lsv_analysis_with_manifest",
+    "validate_common_potential_grid",
+]

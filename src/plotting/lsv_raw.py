@@ -10,7 +10,13 @@ import matplotlib.pyplot as plt
 from analysis.lsv_analysis import LSVAnalysisResult
 from export.figures import save_figure_formats
 
-from .common import GROUP_COLORS, new_figure, potential_label, style_axes
+from .common import (
+    colors_for_groups,
+    new_figure,
+    potential_label,
+    safe_filename_component,
+    style_axes,
+)
 
 
 def _global_limits(result: LSVAnalysisResult) -> tuple[tuple[float, float], tuple[float, float]]:
@@ -27,18 +33,25 @@ def plot_raw_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Pat
     x_limits, y_limits = _global_limits(result)
     generated: list[Path] = []
     target = result.settings.target_potential_V
-    for group in ("A", "B", "C"):
+    groups = result.groups
+    colors = colors_for_groups(groups)
+    for group in groups:
         figure, axis = new_figure()
         rows = [item for item in result.files if item.manifest.group == group]
         material_label_used = False
+        bare_label_used = False
+        material_count = sum(item.manifest.electrode_type == "Material" for item in rows)
+        bare_count = sum(item.manifest.electrode_type == "Bare" for item in rows)
         for item in rows:
             x = item.data.potential_V
             y = item.data.current_A * 1e6
             if item.manifest.electrode_type == "Bare":
-                axis.plot(x, y, color="#111111", linewidth=1.8, linestyle="--", label="Bare (n=1)")
+                label = f"Bare (n={bare_count})" if not bare_label_used else None
+                axis.plot(x, y, color="#111111", linewidth=1.8, linestyle="--", label=label)
+                bare_label_used = True
             else:
-                label = "Material electrodes (n=13)" if not material_label_used else None
-                axis.plot(x, y, color=GROUP_COLORS[group], linewidth=0.8, alpha=0.68, label=label)
+                label = f"Material electrodes (n={material_count})" if not material_label_used else None
+                axis.plot(x, y, color=colors[group], linewidth=0.8, alpha=0.68, label=label)
                 material_label_used = True
         axis.axvline(
             target,
@@ -56,6 +69,10 @@ def plot_raw_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Pat
         )
         style_axes(axis)
         axis.legend(frameon=False, loc="best")
-        generated.extend(save_figure_formats(figure, output / f"group_{group}_raw_lsv"))
+        generated.extend(
+            save_figure_formats(
+                figure, output / f"group_{safe_filename_component(group)}_raw_lsv"
+            )
+        )
         plt.close(figure)
     return tuple(generated)

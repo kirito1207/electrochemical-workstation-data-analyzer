@@ -14,6 +14,7 @@ from scipy import stats
 class ComparisonResult:
     comparison: str
     comparison_role: str
+    holm_family: str | None
     test: str
     statistic: float
     raw_p: float
@@ -26,6 +27,19 @@ class ComparisonResult:
     hedges_g_ci_high: float
     bootstrap_seed: int
     bootstrap_resamples: int
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonDefinition:
+    left_group: str
+    right_group: str
+    role: str
+    holm_family: str | None = None
+    name: str | None = None
+
+    @property
+    def comparison_name(self) -> str:
+        return self.name or f"{self.left_group}-{self.right_group}"
 
 
 def holm_adjust(p_values: Sequence[float]) -> tuple[float, ...]:
@@ -90,6 +104,7 @@ def _one_comparison(
     x: np.ndarray,
     y: np.ndarray,
     *,
+    holm_family: str | None,
     seed: int,
     resamples: int,
 ) -> tuple[ComparisonResult, ComparisonResult]:
@@ -103,6 +118,7 @@ def _one_comparison(
     shared = dict(
         comparison=name,
         comparison_role=role,
+        holm_family=holm_family,
         holm_adjusted_p=None,
         mean_difference=difference,
         mean_difference_ci_low=diff_low,
@@ -137,39 +153,92 @@ def compare_groups(
 ) -> tuple[ComparisonResult, ...]:
     """Run fixed A-B/B-C primary and A-C exploratory comparisons."""
 
-    arrays = {
-        group: np.asarray(grouped_values[group], dtype=np.float64)
-        for group in ("A", "B", "C")
-    }
-    for group, values in arrays.items():
-        if len(values) < 2 or not np.isfinite(values).all():
-            raise ValueError(f"Group {group} requires at least two finite observations.")
-
     definitions = (
-        ("A-B", "primary: detection medium (water vs PBS), PB 10 cycles", "A", "B"),
-        ("B-C", "primary: PB deposition cycles (10 vs 20), PBS", "B", "C"),
-        ("A-C", "exploratory: medium and PB cycles both differ", "A", "C"),
+        ComparisonDefinition(
+            "A", "B", "primary: detection medium (water vs PBS), PB 10 cycles",
+            "pb42_primary",
+        ),
+        ComparisonDefinition(
+            "B", "C", "primary: PB deposition cycles (10 vs 20), PBS",
+            "pb42_primary",
+        ),
+        ComparisonDefinition(
+            "A", "C", "exploratory: medium and PB cycles both differ",
+        ),
     )
-    results: list[ComparisonResult] = []
-    for index, (name, role, left, right) in enumerate(definitions):
-        results.extend(
-            _one_comparison(
-                name,
-                role,
-                arrays[left],
-                arrays[right],
-                seed=bootstrap_seed + index,
-                resamples=bootstrap_resamples,
-            )
-        )
+    return compare_defined_groups(
+        grouped_values,
+        definitions,
+        bootstrap_seed=bootstrap_seed,
+        bootstrap_resamples=bootstrap_resamples,
+    )
 
-    primary_welch_indices = [
-        index
-        for index, item in enumerate(results)
-        if item.comparison in {"A-B", "B-C"}
-        and item.test == "Welch independent-samples t-test"
-    ]
-    adjusted = holm_adjust([results[index].raw_p for index in primary_welch_indices])
-    for index, value in zip(primary_welch_indices, adjusted, strict=True):
-        results[index] = replace(results[index], holm_adjusted_p=value)
+
+def compare_defined_groups(
+    grouped_values: Mapping[str, Sequence[float]],
+    definitions: Sequence[ComparisonDefinition],
+    *,
+    bootstrap_seed: int = 20260910,
+    bootstrap_resamples: int = 5000,
+) -> tuple[ComparisonResult, ...]:
+    """Run only user-declared comparisons and adjust declared primary families."""
+
+    names = [definition.comparison_name for definition in definitions]
+    if len(names) != len(set(names)):
+        raise ValueError("Comparison names must be unique.")
+    results: list[ComparisonResult] = []
+    result_families: list[str | None] = []
+    for index, definition in enumerate(definitions):
+        left = definition.left_group
+        right = definition.right_group
+        if not left.strip() or not right.strip() or left == right:
+            raise ValueError("Comparison groups must be distinct, non-empty names.")
+        if left not in grouped_values or right not in grouped_values:
+            raise ValueError(
+                f"Comparison {definition.comparison_name} references an unknown group."
+            )
+        if definition.holm_family and not definition.role.lower().startswith("primary"):
+            raise ValueError("Holm families may contain only primary comparisons.")
+        x = np.asarray(grouped_values[left], dtype=np.float64)
+        y = np.asarray(grouped_values[right], dtype=np.float64)
+        for group, values in ((left, x), (right, y)):
+            if len(values) < 2 or not np.isfinite(values).all():
+                raise ValueError(
+                    f"Group {group} requires at least two finite observations for comparison."
+                )
+        pair = _one_comparison(
+            definition.comparison_name,
+            definition.role,
+            x,
+            y,
+            holm_family=definition.holm_family,
+            seed=bootstrap_seed + index,
+            resamples=bootstrap_resamples,
+        )
+        results.extend(
+            pair
+        )
+        result_families.extend((definition.holm_family, definition.holm_family))
+
+    families = tuple(dict.fromkeys(family for family in result_families if family))
+    for family in families:
+        indices = [
+            index
+            for index, item in enumerate(results)
+            if result_families[index] == family
+            and item.test == "Welch independent-samples t-test"
+        ]
+        adjusted = holm_adjust([results[index].raw_p for index in indices])
+        for index, value in zip(indices, adjusted, strict=True):
+            results[index] = replace(results[index], holm_adjusted_p=value)
     return tuple(results)
+
+
+__all__ = [
+    "ComparisonDefinition",
+    "ComparisonResult",
+    "compare_defined_groups",
+    "compare_groups",
+    "hedges_g",
+    "holm_adjust",
+]

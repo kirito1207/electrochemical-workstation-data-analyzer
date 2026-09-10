@@ -6,13 +6,25 @@ from .lsv_analysis import (
     LSVAnalysisResult,
     PotentialGridMismatchError,
     analyze_lsv_files,
+    analyze_lsv_with_manifest,
     run_lsv_analysis,
+    run_lsv_analysis_with_manifest,
+)
+from .lsv_templates import (
+    CURRENT_PB_42_TEMPLATE,
+    GroupDesign,
+    PB42ExperimentTemplate,
 )
 from .metadata import (
     ExperimentManifest,
     ManifestEntry,
     MetadataResolutionError,
+    confirmed_generic_manifest,
+    infer_current_pb42_manifest,
     infer_experiment_manifest,
+    suggest_generic_manifest,
+    validate_current_pb42_design,
+    validate_generic_manifest,
 )
 from .outliers import OutlierFlag, flag_mad_outliers
 from .potential import (
@@ -26,7 +38,13 @@ from .sign_qc import (
     MIXED_SIGN_WARNING,
     evaluate_current_signs,
 )
-from .statistics import ComparisonResult, compare_groups, holm_adjust
+from .statistics import (
+    ComparisonDefinition,
+    ComparisonResult,
+    compare_defined_groups,
+    compare_groups,
+    holm_adjust,
+)
 from .it_analysis import (
     ITAnalysisInput,
     ITAnalysisRun,
@@ -68,11 +86,14 @@ from .it_qc import (
 __all__ = [
     "AnalysisSettings",
     "ComparisonResult",
+    "ComparisonDefinition",
     "CurrentAtPotential",
     "CurrentSignQC",
     "DEFAULT_SIGN_ZERO_TOLERANCE_A",
     "DescriptiveStatistics",
     "ExperimentManifest",
+    "CURRENT_PB_42_TEMPLATE",
+    "GroupDesign",
     "LSVAnalysisResult",
     "ITAnalysisInput",
     "ITAnalysisRun",
@@ -95,6 +116,7 @@ __all__ = [
     "PlateauResult",
     "PotentialGridMismatchError",
     "PotentialOutOfRangeError",
+    "PB42ExperimentTemplate",
     "StepDefinition",
     "StepProtocol",
     "StepProtocolError",
@@ -102,6 +124,8 @@ __all__ = [
     "analyze_it_data",
     "analyze_it_file",
     "analyze_lsv_files",
+    "analyze_lsv_with_manifest",
+    "compare_defined_groups",
     "compare_groups",
     "calculate_delta_i",
     "describe_values",
@@ -114,10 +138,16 @@ __all__ = [
     "fit_group_mean_calibration",
     "holm_adjust",
     "infer_experiment_manifest",
+    "infer_current_pb42_manifest",
+    "suggest_generic_manifest",
+    "confirmed_generic_manifest",
     "define_intervals",
     "evaluate_delta_direction",
     "run_lsv_analysis",
+    "run_lsv_analysis_with_manifest",
     "run_it_analysis",
     "suggest_addition_times",
     "summarize_concentrations",
+    "validate_current_pb42_design",
+    "validate_generic_manifest",
 ]

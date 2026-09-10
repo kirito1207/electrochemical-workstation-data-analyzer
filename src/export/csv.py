@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import csv
+import re
 from dataclasses import asdict
 from pathlib import Path
 from typing import Mapping, Sequence
 
 from analysis.lsv_analysis import LSVAnalysisResult
+
+
+def _safe_filename_component(value: str) -> str:
+    cleaned = re.sub(r"[^\w.-]+", "_", value, flags=re.UNICODE).strip("._")
+    return cleaned or "unnamed"
 
 
 def _write_rows(path: Path, rows: Sequence[Mapping[str, object]], fieldnames: Sequence[str]) -> Path:
@@ -75,7 +81,10 @@ def export_csv_bundle(result: LSVAnalysisResult, output_dir: str | Path) -> tupl
         _write_rows(
             output / "experiment_manifest.csv",
             manifest_rows,
-            ("file_name", "relative_path", "group", "electrode_type", "sample_id", "notes"),
+            (
+                "file_name", "relative_path", "group", "electrode_type",
+                "sample_id", "notes", "file_path",
+            ),
         )
     )
 
@@ -156,7 +165,11 @@ def export_csv_bundle(result: LSVAnalysisResult, output_dir: str | Path) -> tupl
                 item.data.potential_V, item.data.current_A, strict=True
             )
         ]
-        name = f"group_{item.manifest.group}_{item.manifest.sample_id}_{Path(item.manifest.file_name).stem}.csv"
+        name = (
+            f"group_{_safe_filename_component(item.manifest.group or 'unresolved')}_"
+            f"{_safe_filename_component(item.manifest.sample_id or 'unresolved')}_"
+            f"{_safe_filename_component(Path(item.manifest.file_name).stem)}.csv"
+        )
         generated.append(
             _write_rows(parsed_dir / name, rows, ("Potential_V", "Current_A", "Current_uA"))
         )
