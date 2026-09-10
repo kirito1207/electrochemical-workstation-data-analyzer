@@ -1,6 +1,6 @@
 # chi760e-h2o2-analyzer
 
-当前开发状态：**parser v0.1**。
+当前开发状态：**Stage 3（parser v0.1 + 可配置 LSV 批量统计分析）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -48,9 +48,41 @@ i-t 时间轴从一个采样间隔开始，即 `t[i] = (i + 1) × dt`。设置�
 
 用户分组、electrode type、sample ID 和 notes 使用独立的可选 `UserMetadata`，不与 CHI 原始 metadata 混合。`parse_files()` 可批量调用任意文件路径，不依赖固定样本名或目录。
 
-parser、analysis、plotting 和 GUI 将保持职责分离。
+parser、analysis、plotting、export 和未来 GUI 保持职责分离。
 
 批量兼容性检查使用 `validate_lsv_batch()`。每个文件独立处理，一个损坏或不支持的文件不会中止后续文件；结果可通过 `write_batch_validation_csv()` 和 `write_batch_validation_report()` 输出为不含电流数组的验证报告。
+
+## Stage 3 LSV 分析
+
+`run_lsv_analysis()` 对已确认的 42 文件实验设计执行完整且可追踪的分析。分析电位不是固定值；默认 `0.000 V`，也可由调用方设置为扫描范围内的任意电位。精确采样点直接读取，非采样电位使用左右相邻真实点线性插值，禁止外推。
+
+```python
+from analysis import AnalysisSettings, run_lsv_analysis
+
+run = run_lsv_analysis(
+    "/path/to/42_lsv_files",
+    output_base="results",
+    settings=AnalysisSettings(
+        target_potential_V=-0.050,
+        analysis_metric="magnitude",  # 或 "signed"
+        bootstrap_seed=20260910,
+        bootstrap_resamples=5000,
+    ),
+)
+```
+
+分组信息属于用户 metadata，与 CHI 原始 metadata 分开保存。当前实验布局根据目录和文件名推断 A/B/C、Bare/Material 和 sample ID，并在统计前严格确认每组恰好 `1 Bare + 13 Material`；无法唯一分类时拒绝分析。Bare 只用于原始曲线和逐文件汇总，Material 才进入描述统计和组间检验。
+
+每次运行创建新的时间戳结果目录，不覆盖旧分析。输出包括：
+
+- 42 份保留原始精度与符号的解析 CSV，以及 manifest、参数、指定电位、组汇总、统计、异常值和排除日志 CSV
+- `LSV_analysis.xlsx`，包含 `Analysis_Settings`、`File_Metadata`、`Experiment_Parameters`、`Selected_Potential_Data`、`Group_Summary`、`Statistics`、`Outlier_Flags` 和 `Exclusion_Log`
+- 原始 LSV、Material mean ± SD、A/B/C overlay、指定电位散点和 CV% 图，每图导出 PNG（300 dpi）、SVG 和 PDF
+- 带 source SHA-256、分组、分析电位、metric、统计方法和软件版本的 JSON 分析日志
+
+默认主指标为指定电位处的绝对电流幅值，但 signed current 始终同时保留。分析不会平滑、基线校正、归一化、改变整条曲线符号、自动寻找最显著电位或自动删除 MAD 标记点。正式比较固定为 A–B 和 B–C；A–C 仅标记为 exploratory。
+
+Stage 3 仍不包括 GUI、i-t 校准分析或 Windows 打包。
 
 ## 安装与测试
 
