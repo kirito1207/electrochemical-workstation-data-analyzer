@@ -5,6 +5,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
+from .batch import (
+    BatchValidationResult,
+    FileValidationResult,
+    LSVParameterExpectation,
+    validate_lsv_batch,
+    write_batch_validation_csv,
+    write_batch_validation_report,
+)
 from .detector import detect_experiment
 from .diagnostics import (
     AmbiguousPointCountError,
@@ -22,13 +30,16 @@ from .models import ExperimentData, ITData, LSVData, UserMetadata
 
 __all__ = [
     "AmbiguousPointCountError",
+    "BatchValidationResult",
     "CHIParserError",
     "DataValidationError",
     "DiagnosticReport",
     "ExperimentData",
+    "FileValidationResult",
     "ITData",
     "InvalidCHIFileError",
     "LSVData",
+    "LSVParameterExpectation",
     "PointCountError",
     "UnsupportedExperimentError",
     "UserMetadata",
@@ -36,6 +47,9 @@ __all__ = [
     "parse_files",
     "parse_it",
     "parse_lsv",
+    "validate_lsv_batch",
+    "write_batch_validation_csv",
+    "write_batch_validation_report",
 ]
 
 
@@ -55,4 +69,3 @@ def parse_files(paths: Iterable[str | Path]) -> list[ExperimentData]:
     """Parse multiple independent files without embedding grouping logic."""
 
     return [parse_file(path) for path in paths]
-

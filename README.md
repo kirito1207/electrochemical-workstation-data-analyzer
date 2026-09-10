@@ -11,6 +11,8 @@
 
 当前已使用 1 个真实 LSV 文件和 1 个真实 i-t 文件进行 regression validation。
 
+Stage 2.5 进一步使用 42 个正式 LSV 文件完成批量兼容性验证：42/42 均通过，实验参数全部一致，且参数块到数据区的距离均为 600 bytes。正式实验 `.bin` 仅在临时工作区读取，没有加入仓库；仓库中的 `batch_validation.csv` 和 `batch_validation_report.md` 只包含文件名、哈希、结构参数、QC 状态和诊断，不包含原始电流数组。
+
 暂不支持、也不会猜测解析：
 
 - CV
@@ -48,6 +50,8 @@ i-t 时间轴从一个采样间隔开始，即 `t[i] = (i + 1) × dt`。设置�
 
 parser、analysis、plotting 和 GUI 将保持职责分离。
 
+批量兼容性检查使用 `validate_lsv_batch()`。每个文件独立处理，一个损坏或不支持的文件不会中止后续文件；结果可通过 `write_batch_validation_csv()` 和 `write_batch_validation_report()` 输出为不含电流数组的验证报告。
+
 ## 安装与测试
 
 ```bash
@@ -67,4 +71,3 @@ SHA-256：
 - i-t：`c3022e4a26f5c66f7f59746b47bb6c563f68d40f29f7044d3ddaa324b5fcf3f5`
 
 仓库原 `sample/` 文件显示的 40 位值是 Git blob SHA-1，不是 SHA-256；`sample_data/` 中的字节内容与原文件一致。
-
