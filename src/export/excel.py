@@ -22,6 +22,8 @@ THIN_BLUE = Side(style="thin", color="B4C7E7")
 
 EXPLICIT_WIDTHS = {
     "file_name": 36,
+    "source_file": 36,
+    "sample_id": 13,
     "relative_path": 52,
     "source_sha256": 66,
     "current_encoding": 38,
@@ -31,6 +33,12 @@ EXPLICIT_WIDTHS = {
     "outlier_method": 25,
     "outlier_reason": 58,
     "warning": 72,
+    "warnings": 58,
+    "notes": 32,
+    "protocol_source": 34,
+    "included_concentrations_uM": 30,
+    "lod_reason": 58,
+    "error": 58,
     "statistical_methods": 58,
     "Value": 58,
 }
@@ -41,6 +49,13 @@ INTEGER_FIELDS = {
     "n",
     "bootstrap_seed",
     "bootstrap_resamples",
+    "negative_count",
+    "positive_count",
+    "near_zero_count",
+    "total_count",
+    "included_count",
+    "excluded_count",
+    "plateau_n_points",
 }
 
 
@@ -54,6 +69,8 @@ def _number_format(header: str) -> str | None:
         for token in (
             "_V",
             "_uA",
+            "_uM",
+            "_s",
             "mean",
             "median",
             "sd",
@@ -70,6 +87,10 @@ def _number_format(header: str) -> str | None:
             "effect_size",
             "ci_",
             "response",
+            "slope",
+            "intercept",
+            "r_squared",
+            "cv_",
         )
     ):
         return "0.000000"
@@ -97,6 +118,11 @@ def _append_table(sheet, headers: Sequence[str], rows: Iterable[Sequence[object]
                 "multiple_comparison",
                 "outlier_reason",
                 "warning",
+                "warnings",
+                "notes",
+                "protocol_source",
+                "lod_reason",
+                "error",
                 "Value",
             }
             cell.alignment = Alignment(vertical="center", wrap_text=wrap)
@@ -109,6 +135,11 @@ def _append_table(sheet, headers: Sequence[str], rows: Iterable[Sequence[object]
                 "test",
                 "outlier_reason",
                 "warning",
+                "warnings",
+                "notes",
+                "protocol_source",
+                "lod_reason",
+                "error",
                 "Value",
             }
             for column in range(1, len(headers) + 1)

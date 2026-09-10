@@ -86,6 +86,49 @@ Stage 3.1 增加指定电位电流方向一致性 QC。程序使用明确记录�
 
 Stage 3 仍不包括 GUI、i-t 校准分析或 Windows 打包。
 
+## Stage 4 i-t 阶梯加样与校准
+
+Stage 4 使用已经验证的 `ITData`，但把加样时间和最终 H2O2 浓度严格作为用户 metadata。正式分析必须传入 `user_confirmed=True` 的 `StepProtocol`；程序不会根据电流阶跃自动猜测浓度。
+
+```python
+from pathlib import Path
+from analysis import (
+    ITAnalysisInput,
+    ITAnalysisSettings,
+    StepDefinition,
+    StepProtocol,
+    run_it_analysis,
+)
+
+protocol = StepProtocol(
+    user_confirmed=True,
+    source="lab notebook",
+    steps=(
+        StepDefinition("baseline", 0.0, 0.1, True, "0 µM baseline"),
+        StepDefinition("step_1", 2.0, 100.0, True),
+        StepDefinition("step_2", 5.0, 200.0, True),
+        StepDefinition("step_3", 10.0, 300.0, True),
+        StepDefinition("step_4", 25.0, 400.0, False, "Excluded from selected linear range"),
+    ),
+)
+
+run_it_analysis(
+    [ITAnalysisInput(Path("electrode_1.bin"), "E1", protocol)],
+    settings=ITAnalysisSettings(
+        analysis_metric="signed",  # 或 "magnitude"
+        plateau_fraction=0.20,
+    ),
+)
+```
+
+区间采用 `[start, end)`，最后区间包含记录末点。平台默认使用每段最后 20% 的真实数据点，比例可配置；短于首选 10 s 的平台只产生 warning，不会向前扩展窗口。平台保存 mean、SD、SEM 和线性 drift。响应严格定义为 `ΔI = I_step - I_baseline`，magnitude 为 `abs(ΔI)`，不会使用 `abs(I_step) - abs(I_baseline)`。
+
+线性范围完全由每个 step 的 `include_in_calibration` 决定。校准使用 ordinary least squares，输出 slope、intercept、R² 和实际纳入浓度。没有足够独立 blank replicates 时明确输出 `LOD not calculated`。多电极结果保留 individual responses，同时汇总每个浓度的 mean、SD、SEM 和 CV%；MAD 和混合 ΔI 方向仅标记，不自动剔除。
+
+`suggest_addition_times()` 仅根据相邻滑动窗口均值变化返回 `Suggested only / 未确认` 的候选时间，不返回浓度，也不修改或平滑用于平台计算的原始电流。候选时间必须由用户确认并组成 StepProtocol 后才能进入正式校准。
+
+Stage 4 不包含 GUI、Windows exe、机器学习或 CV/CA parser。
+
 ## 安装与测试
 
 ```bash
