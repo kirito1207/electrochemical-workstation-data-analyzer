@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.1.2
+# chi760e-h2o2-analyzer — Stage 5.1.3
 
-当前开发状态：**Stage 5.1.2（单窗口多工作区 GUI session 管理）**。
+当前开发状态：**Stage 5.1.3（交互式曲线游标与内联读数）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -225,6 +225,14 @@ LSV 与 i-t 页面现在分别自动叠加该 technique 下全部已成功解析
 后台解析任务携带创建任务时的 workspace ID；即使用户解析期间切换标签，结果仍只写回原工作区。正在执行解析任务的工作区在任务结束前不可关闭，避免产生失控 worker 或错误归属。
 
 **Workspace 与科研 Group 严格不同：**Workspace 是一批独立数据/分析会话，不参与统计定义；Group 是 Stage 5.2 confirmed manifest 中的科研分组。未来一个 Workspace 可以包含多个 Groups，GUI 不会把工作区名称自动转换为 Group。
+
+## Stage 5.1.3 Interactive curve cursor
+
+LSV 和 i-t 原始曲线 preview 支持左键单击设置只读检查游标，并以垂直参考线显示当前位置。右侧现有曲线列表会对全部可见曲线内联显示该位置的 `Current / µA`；隐藏曲线不显示读数，选中文件仍仅控制高亮和实验参数。可使用“清除游标”恢复无游标状态。
+
+LSV 游标读数直接调用已验证的 `extract_current_at_potential()`：命中采样点时读取原始值，位于相邻点之间时线性插值，并禁止外推。i-t 游标使用最近真实采样点，同时在内部保留请求时间和实际采样时间；检查游标不会成为加样时间。所有计算均为只读，不修改 `potential_V`、`time_s` 或 `current_A`。
+
+每个 Workspace 分别保存 LSV 与 i-t 的游标位置和可见状态，切换后恢复各自读数。**Inspection cursor 与正式 analysis target potential 是两个独立概念**：点击 preview 不会改变分析设置、样本纳入、科研 Group 或 exclusion。消息日志默认弱化为紧凑摘要，可按需展开完整诊断。
 
 ## 安装与测试
 

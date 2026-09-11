@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from tkinter import ttk
+from typing import Callable
 
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
@@ -25,13 +26,29 @@ def downsample_for_display(x, y, *, max_points: int = MAX_PREVIEW_POINTS):
 
 
 class PlotPreview(ttk.LabelFrame):
-    def __init__(self, master: tk.Misc):
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        on_cursor_clicked: Callable[[float], None] | None = None,
+    ):
         super().__init__(master, text="原始曲线预览")
+        self._on_cursor_clicked = on_cursor_clicked
         self.figure = Figure(figsize=(6.4, 4.0), dpi=100, constrained_layout=True)
         self.axis = self.figure.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.canvas.mpl_connect("button_press_event", self._handle_click)
         self.clear("请选择一个解析成功的文件")
+
+    def _handle_click(self, event) -> None:
+        if (
+            self._on_cursor_clicked is not None
+            and event.button == 1
+            and event.inaxes is self.axis
+            and event.xdata is not None
+        ):
+            self._on_cursor_clicked(float(event.xdata))
 
     def clear(self, message: str = "暂无预览") -> None:
         self.axis.clear()
@@ -39,7 +56,12 @@ class PlotPreview(ttk.LabelFrame):
         self.axis.set_axis_off()
         self.canvas.draw_idle()
 
-    def show_collection(self, collection: PreviewCollection) -> None:
+    def show_collection(
+        self,
+        collection: PreviewCollection,
+        *,
+        cursor_x: float | None = None,
+    ) -> None:
         self.axis.clear()
         self.axis.set_axis_on()
         visible = collection.visible_curves
@@ -62,6 +84,15 @@ class PlotPreview(ttk.LabelFrame):
         self.axis.set_title(
             f"{collection.experiment_type} 原始曲线预览（可见 {len(visible)}/{len(collection.curves)}）"
         )
+        if cursor_x is not None:
+            self.axis.axvline(
+                cursor_x,
+                color="#333333",
+                linewidth=1.2,
+                linestyle="--",
+                alpha=0.85,
+                zorder=5,
+            )
         self.axis.grid(True, alpha=0.22)
         self.canvas.draw_idle()
 

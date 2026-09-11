@@ -8,11 +8,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .cursor import InspectionCursorState
 from .state import AppState, PreviewDisplayState
 
 
 def _default_selection() -> dict[str, str | None]:
     return {"all": None, "LSV": None, "i-t": None, "CV": None, "CA": None}
+
+
+def _default_cursors() -> dict[str, InspectionCursorState]:
+    return {"LSV": InspectionCursorState(), "i-t": InspectionCursorState()}
 
 
 @dataclass(slots=True)
@@ -22,6 +27,7 @@ class WorkspaceSession:
     state: AppState = field(default_factory=AppState)
     preview_display: PreviewDisplayState = field(default_factory=PreviewDisplayState)
     selected_by_route: dict[str, str | None] = field(default_factory=_default_selection)
+    cursor_by_route: dict[str, InspectionCursorState] = field(default_factory=_default_cursors)
     current_route: str = "all"
     log_messages: list[str] = field(default_factory=list)
 
@@ -31,6 +37,7 @@ class WorkspaceSession:
         self.state.clear()
         self.preview_display = PreviewDisplayState()
         self.selected_by_route = _default_selection()
+        self.cursor_by_route = _default_cursors()
 
 
 class WorkspaceManager:

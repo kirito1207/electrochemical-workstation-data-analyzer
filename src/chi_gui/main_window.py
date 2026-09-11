@@ -8,6 +8,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .background import BackgroundRunner, WorkerEvent
 from .controller import GUIController, discover_bin_files
+from .cursor import CursorReadingSet, build_cursor_readings
 from .dialogs import confirm_close_while_busy, show_record_details
 from .formatting import parameter_rows
 from .pages import IT_STAGE_MESSAGE, LSV_STAGE_MESSAGE, WELCOME_MESSAGE, unsupported_message
@@ -146,15 +147,18 @@ class MainWindow:
 
         lower = ttk.Panedwindow(workspace, orient="horizontal")
         lower.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
-        self.plot_preview = PlotPreview(lower)
+        self.plot_preview = PlotPreview(lower, on_cursor_clicked=self._cursor_clicked)
         lower.add(self.plot_preview, weight=3)
 
         info = ttk.Frame(lower)
         lower.add(info, weight=2)
         info.columnconfigure(0, weight=1)
-        info.rowconfigure(0, weight=1)
-        info.rowconfigure(2, weight=1)
-        self.curve_list = CurveList(info, on_visibility_changed=self._visibility_changed)
+        info.rowconfigure(0, weight=3)
+        self.curve_list = CurveList(
+            info,
+            on_visibility_changed=self._visibility_changed,
+            on_clear_cursor=self._clear_cursor,
+        )
         self.curve_list.grid(row=0, column=0, sticky="nsew")
         self.parameter_box = ttk.LabelFrame(info, text="实验参数")
         self.parameter_box.grid(row=1, column=0, sticky="ew", pady=(6, 0))
@@ -277,9 +281,14 @@ class MainWindow:
             selected_key=self.selected_by_route.get(experiment_type),
         )
         self.selected_by_route[experiment_type] = collection.selected_key
-        self.curve_list.set_collection(collection)
+        readings = self._cursor_readings(collection, experiment_type)
+        self.curve_list.set_collection(collection, readings)
         if collection.curves:
-            self.plot_preview.show_collection(collection)
+            cursor = self.workspace.cursor_by_route[experiment_type]
+            self.plot_preview.show_collection(
+                collection,
+                cursor_x=cursor.requested_x if cursor.visible else None,
+            )
             selected = next(
                 record for record in self.state.records if record.key == collection.selected_key
             )
@@ -290,6 +299,38 @@ class MainWindow:
             self.current_record = None
             self._render_parameters(None)
             self.plot_preview.clear(f"当前没有已成功解析的 {experiment_type} 文件")
+
+    def _cursor_readings(
+        self,
+        collection,
+        experiment_type: str,
+    ) -> CursorReadingSet | None:
+        cursor = self.workspace.cursor_by_route[experiment_type]
+        if not cursor.visible or cursor.requested_x is None:
+            return None
+        return build_cursor_readings(self.state.records, collection, cursor.requested_x)
+
+    def _cursor_clicked(self, requested_x: float) -> None:
+        if self.current_route not in {"LSV", "i-t"}:
+            return
+        collection = self.controller.build_preview_collection(
+            self.state.records,
+            experiment_type=self.current_route,
+            display_state=self.preview_display,
+            selected_key=self.selected_by_route[self.current_route],
+        )
+        candidate = build_cursor_readings(self.state.records, collection, requested_x)
+        if not any(reading.available for reading in candidate.readings):
+            self._log("游标位置超出当前可见曲线的记录范围，未进行外推。")
+            return
+        self.workspace.cursor_by_route[self.current_route].set(requested_x)
+        self._render_technique_preview(self.current_route)
+
+    def _clear_cursor(self) -> None:
+        if self.current_route not in {"LSV", "i-t"}:
+            return
+        self.workspace.cursor_by_route[self.current_route].clear()
+        self._render_technique_preview(self.current_route)
 
     def _choose_files(self) -> None:
         selected = filedialog.askopenfilenames(
@@ -391,28 +432,12 @@ class MainWindow:
         self._render_parameters(record)
         self.selected_by_route[self.current_route] = record.key if record is not None else None
         if self.current_route in {"LSV", "i-t"}:
-            collection = self.controller.build_preview_collection(
-                self.state.records,
-                experiment_type=self.current_route,
-                display_state=self.preview_display,
-                selected_key=self.selected_by_route[self.current_route],
-            )
-            self.curve_list.set_collection(collection)
-            if collection.curves:
-                self.plot_preview.show_collection(collection)
-            else:
-                self.plot_preview.clear(f"当前没有已成功解析的 {self.current_route} 文件")
+            self._render_technique_preview(self.current_route)
 
     def _visibility_changed(self, record_key: str, visible: bool) -> None:
         self.preview_display.set_visible(record_key, visible)
         if self.current_route in {"LSV", "i-t"}:
-            collection = self.controller.build_preview_collection(
-                self.state.records,
-                experiment_type=self.current_route,
-                display_state=self.preview_display,
-                selected_key=self.selected_by_route[self.current_route],
-            )
-            self.plot_preview.show_collection(collection)
+            self._render_technique_preview(self.current_route)
 
     def _render_parameters(self, record: FileRecord | None) -> None:
         for child in self.parameter_box.winfo_children():
@@ -425,8 +450,8 @@ class MainWindow:
         if record.error_type:
             rows.extend((("错误类型", record.error_type), ("错误信息", record.error_message or "")))
         for index, (name, value) in enumerate(rows):
-            ttk.Label(self.parameter_box, text=f"{name}：", padding=(6, 2)).grid(row=index, column=0, sticky="nw")
-            ttk.Label(self.parameter_box, text=value, wraplength=390, padding=(2, 2)).grid(row=index, column=1, sticky="nw")
+            ttk.Label(self.parameter_box, text=f"{name}：", padding=(5, 1)).grid(row=index, column=0, sticky="nw")
+            ttk.Label(self.parameter_box, text=value, wraplength=390, padding=(2, 1)).grid(row=index, column=1, sticky="nw")
         self.parameter_box.columnconfigure(1, weight=1)
 
     def _remove_selected(self) -> None:
