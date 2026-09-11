@@ -12,6 +12,7 @@ from export.figures import save_figure_formats
 
 from .common import (
     colors_for_groups,
+    legend_columns,
     new_figure,
     potential_label,
     safe_filename_component,
@@ -28,20 +29,30 @@ def _global_limits(result: LSVAnalysisResult) -> tuple[tuple[float, float], tupl
     return (x_min, x_max), (y_min - margin, y_max + margin)
 
 
-def build_raw_lsv_figure(result: LSVAnalysisResult, group: str):
+def build_raw_lsv_figure(result: LSVAnalysisResult, group: str | None):
     """Build one group figure for file export or an embedded GUI preview."""
 
     x_limits, y_limits = _global_limits(result)
     target = result.settings.target_potential_V
     groups = result.groups
     colors = colors_for_groups(groups)
-    if group not in groups:
+    all_groups = group in {None, "ALL"}
+    if not all_groups and group not in groups:
         raise ValueError(f"Unknown group: {group}")
-    figure, axis = new_figure()
-    rows = [item for item in result.files if item.manifest.group == group]
-    material_label_used = False
+    figure, axis = new_figure(width=6.8 if all_groups else 6.2)
+    rows = [
+        item for item in result.files
+        if all_groups or item.manifest.group == group
+    ]
+    material_counts = {
+        name: sum(
+            item.manifest.electrode_type == "Material" and item.manifest.group == name
+            for item in rows
+        )
+        for name in groups
+    }
+    material_label_used: set[str] = set()
     bare_label_used = False
-    material_count = sum(item.manifest.electrode_type == "Material" for item in rows)
     bare_count = sum(item.manifest.electrode_type == "Bare" for item in rows)
     for item in rows:
         x = item.data.potential_V
@@ -51,15 +62,31 @@ def build_raw_lsv_figure(result: LSVAnalysisResult, group: str):
             axis.plot(x, y, color="#111111", linewidth=1.8, linestyle="--", label=label)
             bare_label_used = True
         else:
-            label = f"Material electrodes (n={material_count})" if not material_label_used else None
-            axis.plot(x, y, color=colors[group], linewidth=0.8, alpha=0.68, label=label)
-            material_label_used = True
+            item_group = item.manifest.group or ""
+            label = (
+                f"Group {item_group} Material (n={material_counts[item_group]})"
+                if item_group not in material_label_used else None
+            )
+            axis.plot(
+                x,
+                y,
+                color=colors[item_group],
+                linewidth=0.8,
+                alpha=0.68,
+                label=label,
+            )
+            material_label_used.add(item_group)
     axis.axvline(target, color="#666666", linestyle=":", linewidth=1.1,
                  label=f"Analysis potential = {potential_label(target)} V")
-    axis.set(title=f"Group {group} raw LSV", xlabel="Potential / V", ylabel="Current / µA",
+    title = "All Groups raw LSV" if all_groups else f"Group {group} raw LSV"
+    axis.set(title=title, xlabel="Potential / V", ylabel="Current / µA",
              xlim=x_limits, ylim=y_limits)
     style_axes(axis)
-    axis.legend(frameon=False, loc="best")
+    axis.legend(
+        frameon=False,
+        loc="best",
+        ncol=legend_columns(len(groups)) if all_groups else 1,
+    )
     return figure
 
 

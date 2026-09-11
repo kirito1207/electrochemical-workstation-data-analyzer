@@ -16,6 +16,7 @@ from chi_gui.lsv_workflow import (
     ComparisonEditorDraft,
     LSVWorkflowState,
     comparison_display_rows,
+    comparison_draft_error,
     descriptive_display_rows,
     mad_result_status,
     outlier_display_rows,
@@ -250,7 +251,8 @@ class LSVSettingsPanel(ttk.Frame):
         self.comparison_help.set(
             "当前仅 1 个 Material Group，可进行组内描述统计；≥2 个 Group 时可添加组间比较。"
             if len(groups) == 1 else
-            "Primary：预先计划的主要比较；同一 Holm Family 的 Primary Welch p 进行 Holm 校正。"
+            "可从任意两个 Material Group 中定义比较；Group 数量不限。"
+            "同一 Holm Family 的 Primary Welch p 继续进行 Holm 校正。"
         )
         button_state = "disabled" if busy else "normal"
         self.confirm_button.configure(state=button_state)
@@ -294,6 +296,16 @@ class LSVSettingsPanel(ttk.Frame):
 
     def _add_comparison(self) -> None:
         draft = ComparisonDraft(self.left.get(), self.right.get(), self.role.get(), self.family.get(), self.comparison_name.get())
+        error = comparison_draft_error(
+            draft,
+            self._state.comparison_groups if self._state is not None else (),
+        )
+        if error:
+            if self._state is not None:
+                self._state.set_feedback("warning", "Comparison 未添加", (error,))
+                self.feedback.set(self._state.feedback.text)
+                self.feedback_label.configure(foreground="#9a4d00")
+            return
         self.on_change("add_comparison", draft)
         self._editor_draft.clear_after_commit()
         self._apply_editor_draft()
@@ -459,10 +471,10 @@ class LSVResultPlotPanel(ttk.Frame):
         groups = result.groups
         if state.selected_result_plot:
             self.plot_type.set(PLOT_LABELS.get(state.selected_result_plot, PLOT_LABELS["Selected magnitude"]))
-        self.group_combo.configure(values=groups)
+        self.group_combo.configure(values=("ALL", *groups))
         desired_group = state.selected_plot_group
-        if desired_group not in groups:
-            desired_group = groups[0]
+        if desired_group not in ("ALL", *groups):
+            desired_group = "ALL"
         self.group.set(desired_group)
         kind = PLOT_KEYS.get(self.plot_type.get(), "Selected magnitude")
         self._hover_series = ()

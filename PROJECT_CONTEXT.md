@@ -4,7 +4,7 @@
 
 Electrochemical Workstation Data Analyzer is a desktop-oriented electrochemical data analysis project. Its repository-level identity is generic, while its currently validated native binary parser is deliberately narrower: real-file validation primarily covers CH Instruments CHI760E Linear Sweep Voltammetry (LSV) and Amperometric i-t Curve data. The project must not claim support for every workstation vendor or describe the parser as universal.
 
-The current development state is **Stage 5.2.1.1**, including the Stage 5.2 Generic LSV formal-analysis GUI, Stage 5.2.1 usability/workspace hardening, and the selected-potential scatter hover hit-test hotfix. Development history remains cumulative; the repository rename does not reset its stages.
+The current development state is **Stage 5.2.2**, including the Stage 5.2 Generic LSV formal-analysis GUI, Stage 5.2.1 usability/workspace hardening, the Stage 5.2.1.1 selected-potential scatter hover hit-test hotfix, and Stage 5.2.2 multi-group/layout hardening. Development history remains cumulative.
 
 ## Architecture
 
@@ -42,20 +42,20 @@ Descriptive output currently includes n, mean, median, sample SD, SEM, CV%, mini
 
 ## Current GUI and backend status
 
-The GUI currently provides multiple independent Workspaces, file/folder import, raw curve preview, per-curve visibility, numeric cursor control, LSV selected-potential readings, editable metadata, configurable Groups, Bare/Material classification, formal Generic LSV analysis, result tables, publication plots, Sample ID hover on selected-potential scatter, and export.
+The GUI currently provides multiple independent Workspaces, file/folder import, raw curve preview, per-curve visibility, numeric cursor control, LSV selected-potential readings, editable metadata, configurable Groups, Bare/Material classification, formal Generic LSV analysis, result tables, publication plots, Sample ID hover on selected-potential scatter, and export. Confirmed Material metadata automatically determines 1, 2, 3, or N Groups. Single-group analysis needs no comparison; multi-group analysis accepts any user-declared pairwise comparisons without generating all pairs automatically. Descriptive tables and scientific plots retain every Material Group.
+
+The data page owns an independent horizontal pane layout with bounded left/right minimum widths and a remembered sash fraction. Other workflow pages cannot feed their requested Treeview or canvas width back into the data-page split. Long curve filenames use bounded display labels while their full path remains available in details/provenance.
 
 The i-t backend is implemented: user-confirmed step protocols, plateau extraction, response calculation, calibration, QC, plotting, and export exist. The formal i-t GUI has not yet been implemented. CV and CA are future technique-specific extensions and must not be routed through LSV assumptions.
 
-## Known follow-up work (not part of this repository-identity stage)
+## Known follow-up work
 
-1. Fix the abnormal page width/layout when returning to “数据与曲线” after analysis.
-2. Ensure Generic analysis handles 1, 2, 3, and N Groups throughout the GUI without assuming exactly two.
-3. Continue to the formal i-t GUI only after the LSV GUI follow-ups are separately scoped.
+Stage 5.2.2 addressed the abnormal “数据与曲线” width after analysis and the 1/2/3/N Group GUI workflow. Windows manual regression remains required for maximize/restore, workflow-tab switching, long filenames, and multi-Workspace interaction. The next implementation stage may address the formal i-t GUI only when separately scoped.
 
 The existing `ComparisonDefinition` remains suitable for explicit pairwise comparisons between any Groups. Do not add ANOVA, Games–Howell, Tukey, Kruskal–Wallis, or Dunn tests without a separate scientific/statistical design discussion.
 
 ## Near-term roadmap and change discipline
 
-The next work should address the two known Generic LSV GUI issues above, then separately design the i-t formal GUI. Later CV/CA support requires dedicated parsers and technique-specific scientific semantics. Machine learning, broad vendor claims, large package renames, and new statistical families are outside the current roadmap unless explicitly scoped.
+Future multi-group overall condition-effect statistics may separately consider Welch ANOVA, Kruskal–Wallis, and scientifically selected post-hoc procedures. None is implemented or exposed in Stage 5.2.2. The formal i-t GUI also requires a separate stage. Later CV/CA support requires dedicated parsers and technique-specific scientific semantics. Machine learning, broad vendor claims, large package renames, and new statistical families remain outside scope unless explicitly designed.
 
 Any future change must preserve raw-data immutability, provenance, user-confirmed metadata, explicit target/comparison definitions, non-destructive QC, signed values, and separation of parser, analysis, plotting, export, GUI, and optional presets.

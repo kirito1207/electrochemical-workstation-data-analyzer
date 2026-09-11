@@ -1,4 +1,4 @@
-"""Responsive Chinese ttk main window with Stage 5.2.1 usability hardening."""
+"""Responsive Chinese ttk main window with Stage 5.2.2 layout hardening."""
 
 from __future__ import annotations
 
@@ -17,6 +17,12 @@ from .cursor import (
 )
 from .dialogs import confirm_close_while_busy, show_record_details
 from .formatting import parameter_rows
+from .layout import (
+    DATA_PAGE_LEFT_MIN_PX,
+    DATA_PAGE_RIGHT_MIN_PX,
+    DataPageLayoutState,
+    PARAMETER_VALUE_WRAP_PX,
+)
 from .lsv_export import export_lsv_result, open_output_directory
 from .lsv_workflow import (
     GUIWorkflowValidationError,
@@ -31,7 +37,7 @@ from .widgets import (CurveList, FileTable, LogPanel, LSVResultPlotPanel,
 from .workspaces import WorkspaceManager, WorkspaceSession
 
 
-WINDOW_TITLE = "CHI760E 电化学数据分析工具"
+WINDOW_TITLE = "电化学工作站数据分析工具"
 
 
 class MainWindow:
@@ -43,6 +49,9 @@ class MainWindow:
         self.current_record: FileRecord | None = None
         self._running_workspace_id: str | None = None
         self._closing = False
+        self._data_layout = DataPageLayoutState()
+        self._data_layout_job: str | None = None
+        self._data_layout_verify_job: str | None = None
 
         root.title(WINDOW_TITLE)
         root.geometry("1280x820")
@@ -165,6 +174,11 @@ class MainWindow:
                              (self.results_tab, "统计结果"), (self.figures_tab, "结果图表")):
             self.workflow_tabs.add(frame, text=label)
 
+        # Wide result widgets stay inside their own allocated page and cannot
+        # change the data page's requested width or sash allocation.
+        for frame in (self.settings_tab, self.results_tab, self.figures_tab):
+            frame.grid_propagate(False)
+
         table_frame = ttk.LabelFrame(self.data_tab, text="文件列表")
         table_frame.grid(row=0, column=0, sticky="nsew")
         table_frame.columnconfigure(0, weight=1)
@@ -172,17 +186,32 @@ class MainWindow:
         self.file_table = FileTable(table_frame, on_select=self._record_selected)
         self.file_table.grid(row=0, column=0, sticky="nsew")
 
-        lower = ttk.Panedwindow(self.data_tab, orient="horizontal")
-        lower.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
+        self.data_panes = tk.PanedWindow(
+            self.data_tab,
+            orient="horizontal",
+            sashwidth=6,
+            showhandle=False,
+            borderwidth=0,
+            relief="flat",
+        )
+        self.data_panes.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
         self.plot_preview = PlotPreview(
-            lower,
+            self.data_panes,
             on_cursor_clicked=self._cursor_clicked,
             on_cursor_step=self._cursor_step,
         )
-        lower.add(self.plot_preview, weight=3)
+        self.data_panes.add(
+            self.plot_preview,
+            minsize=DATA_PAGE_LEFT_MIN_PX,
+            stretch="always",
+        )
 
-        info = ttk.Frame(lower)
-        lower.add(info, weight=2)
+        info = ttk.Frame(self.data_panes, width=360)
+        self.data_panes.add(
+            info,
+            minsize=DATA_PAGE_RIGHT_MIN_PX,
+            stretch="always",
+        )
         info.columnconfigure(0, weight=1)
         info.rowconfigure(0, weight=3)
         self.curve_list = CurveList(
@@ -197,6 +226,9 @@ class MainWindow:
         self.parameter_box.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.log_panel = LogPanel(info)
         self.log_panel.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
+        self.data_panes.bind("<Configure>", self._data_panes_resized, add="+")
+        self.data_panes.bind("<ButtonRelease-1>", self._remember_data_sash, add="+")
+        self.data_tab.bind("<Map>", lambda _event: self._schedule_data_layout(force=True), add="+")
 
         for frame in (self.settings_tab, self.results_tab, self.figures_tab):
             frame.columnconfigure(0, weight=1); frame.rowconfigure(0, weight=1)
@@ -339,8 +371,58 @@ class MainWindow:
             self.lsv_figures.render(workflow)
 
     def _workflow_tab_changed(self, _event=None) -> None:
-        if self.current_route == "LSV" and self.workflow_tabs.select() == str(self.figures_tab):
+        selected = self.workflow_tabs.select()
+        if selected == str(self.data_tab):
+            self._schedule_data_layout(force=True)
+        if self.current_route == "LSV" and selected == str(self.figures_tab):
             self.lsv_figures.render(self.workspace.lsv_workflow)
+
+    def _data_panes_resized(self, event=None) -> None:
+        width = int(getattr(event, "width", 0) or self.data_panes.winfo_width())
+        if width != self._data_layout.last_width:
+            self._schedule_data_layout()
+
+    def _schedule_data_layout(self, *, force: bool = False) -> None:
+        if force:
+            self._data_layout.last_width = 0
+        if self._data_layout_job is None:
+            self._data_layout_job = self.root.after_idle(self._apply_data_layout)
+
+    def _apply_data_layout(self) -> None:
+        self._data_layout_job = None
+        width = self.data_panes.winfo_width()
+        if width <= 1 or width == self._data_layout.last_width:
+            return
+        self.data_panes.sash_place(0, self._data_layout.sash_position(width), 1)
+        self._data_layout.last_width = width
+        if self._data_layout_verify_job is None:
+            self._data_layout_verify_job = self.root.after_idle(self._verify_data_layout)
+
+    def _verify_data_layout(self) -> None:
+        """Correct one late Tk requested-geometry pass after mapping a tab."""
+
+        self._data_layout_verify_job = None
+        width = self.data_panes.winfo_width()
+        if width <= 1:
+            return
+        desired = self._data_layout.sash_position(width)
+        try:
+            actual, _sash_y = self.data_panes.sash_coord(0)
+        except tk.TclError:
+            return
+        if abs(actual - desired) > 2:
+            self.data_panes.sash_place(0, desired, 1)
+        self._data_layout.last_width = width
+
+    def _remember_data_sash(self, _event=None) -> None:
+        if self._data_layout_verify_job is not None:
+            self.root.after_cancel(self._data_layout_verify_job)
+            self._data_layout_verify_job = None
+        try:
+            sash_x, _sash_y = self.data_panes.sash_coord(0)
+        except tk.TclError:
+            return
+        self._data_layout.remember(self.data_panes.winfo_width(), sash_x)
 
     def _render_technique_preview(self, experiment_type: str) -> None:
         collection = self.controller.build_preview_collection(
@@ -600,7 +682,12 @@ class MainWindow:
             rows.extend((("错误类型", record.error_type), ("错误信息", record.error_message or "")))
         for index, (name, value) in enumerate(rows):
             ttk.Label(self.parameter_box, text=f"{name}：", padding=(5, 1)).grid(row=index, column=0, sticky="nw")
-            ttk.Label(self.parameter_box, text=value, wraplength=390, padding=(2, 1)).grid(row=index, column=1, sticky="nw")
+            ttk.Label(
+                self.parameter_box,
+                text=value,
+                wraplength=PARAMETER_VALUE_WRAP_PX,
+                padding=(2, 1),
+            ).grid(row=index, column=1, sticky="nw")
         self.parameter_box.columnconfigure(1, weight=1)
 
     def _remove_selected(self) -> None:
@@ -627,7 +714,7 @@ class MainWindow:
             elif action == "batch": workflow.batch_update(*values)
             elif action == "target": workflow.set_target_potential(values[0])
             elif action == "metric": workflow.set_metric(values[0])
-            elif action == "add_comparison": workflow.replace_comparisons((*workflow.comparisons, values[0]))
+            elif action == "add_comparison": workflow.add_comparison(values[0])
             elif action == "delete_comparisons":
                 removed = set(values[0]); workflow.replace_comparisons(item for i, item in enumerate(workflow.comparisons) if i not in removed)
         except ValueError as error:

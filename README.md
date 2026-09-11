@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.2.1.1
+# Electrochemical Workstation Data Analyzer — Stage 5.2.2
 
-当前开发状态：**Stage 5.2.1.1（指定电位散点图 hover 命中热修复）**。
+当前开发状态：**Stage 5.2.2（Generic LSV multi-group workflow and GUI layout hardening）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -283,6 +283,16 @@ Workspace 切换现在显式重置未提交 comparison editor 草稿及不存在
 GUI 的指定电位 magnitude/signed scatter 支持 Material individual point hover，显示用户确认后的 Sample ID 和对应电流。Stage 5.2.1.1 使用显示坐标中的 10 px 最近点命中，避免 TkAgg/Windows 对个别小型 scatter marker 的 artist hit-test 不稳定；边缘点与 S11 等任意 Sample ID 均无特判。Hover 只更新内存 annotation，不重新分析或重建 Figure；Bare、mean marker 和 SD errorbar 不参与 hover。静态 PNG/SVG/PDF 导出继续不增加永久 Sample ID 标签，科研数值与 Stage 3/3.1 完全一致。
 
 Windows Stage 5.2.1 人工验收清单见 `docs/windows_stage521_checklist.md`。i-t 正式 GUI、CV、CA、ML 和 Windows exe 均未进入本阶段。
+
+## Stage 5.2.2 Generic LSV 多 Group 与布局加固
+
+Generic LSV GUI 现由用户确认后的 Material metadata 自动识别 1、2、3 到 N 个 Group，不要求预先声明组数，也不限定 A/B/C 等名称。单 Group 可在没有 comparison 的情况下完成 selected-potential extraction、描述统计、MAD、sign QC 和全部适用科研图；多 Group 仍只执行用户显式添加的任意 pairwise comparisons，不自动穷举所有组合。同一 Primary Holm Family 的 Welch p 校正语义保持不变。
+
+描述统计、selected magnitude/signed scatter、Material mean ± SD、mean overlay 和 repeatability CV% 会覆盖全部 Material Groups。类别图根据 Group 数量与标签长度扩展宽度并在需要时旋转标签；颜色按稳定顺序分配。Raw curves 与 Mean ± SD 的 GUI Group filter 支持 `ALL` 或任一当前 Group。Bare 仍保留在 raw curves，并继续排除在 Material summaries、MAD、sign QC Material counts 和组间检验之外。Hover 继续直接使用 confirmed `ManifestEntry.sample_id` 与对应 signed/magnitude 数值。
+
+数据页使用独立、有左右最小宽度和可恢复 sash fraction 的 `tk.PanedWindow`。切换 workflow tab、窗口 resize 或 Workspace 后会恢复合理比例；结果页的 Treeview/Matplotlib requested geometry 不再参与数据页分栏计算。右侧曲线列表使用有界显示名与首选宽度，完整路径仍可在实验参数/详情中查看，长文件名不会继续撑大右栏。
+
+Stage 5.2.2 没有新增 ANOVA、Welch ANOVA、Kruskal–Wallis、Tukey、Games–Howell 或 Dunn，也没有修改 parser、selected-potential extraction、描述统计公式、pairwise statistics、MAD、sign QC 或 i-t backend。Windows 人工验收清单见 `docs/windows_stage522_checklist.md`。
 
 ## 安装与测试
 

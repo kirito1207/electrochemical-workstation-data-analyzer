@@ -12,7 +12,14 @@ import numpy as np
 from analysis.lsv_analysis import LSVAnalysisResult
 from export.figures import save_figure_formats
 
-from .common import colors_for_groups, new_figure, potential_label, style_axes
+from .common import (
+    colors_for_groups,
+    configure_group_ticks,
+    group_figure_width,
+    new_figure,
+    potential_label,
+    style_axes,
+)
 
 
 def _values(result: LSVAnalysisResult, group: str, metric: str) -> np.ndarray:
@@ -70,7 +77,7 @@ def build_selected_potential_figure(
     target_text = potential_label(result.settings.target_potential_V)
     groups = result.groups
     colors = colors_for_groups(groups)
-    figure, axis = new_figure(width=5.7, height=4.7)
+    figure, axis = new_figure(width=group_figure_width(groups, base=5.7), height=4.7)
     hover_series: list[SelectedScatterSeries] = []
     for position, group in enumerate(groups):
         rows = [
@@ -99,14 +106,18 @@ def build_selected_potential_figure(
                 ),
             )
         )
-        axis.errorbar(position, np.mean(values), yerr=np.std(values, ddof=1), fmt="o",
-                      markersize=6, color="#111111", ecolor="#111111", capsize=5,
-                      linewidth=1.2, zorder=4)
+        mean = float(np.mean(values))
+        if len(values) > 1:
+            axis.errorbar(position, mean, yerr=np.std(values, ddof=1), fmt="o",
+                          markersize=6, color="#111111", ecolor="#111111", capsize=5,
+                          linewidth=1.2, zorder=4)
+        else:
+            axis.plot(position, mean, "o", markersize=6, color="#111111", zorder=4)
     title_prefix = "Current magnitude" if metric == "magnitude" else "Signed current"
     axis.set(xlabel="Group",
              ylabel=("Absolute current magnitude / µA" if metric == "magnitude" else "Signed current / µA"),
-             xticks=tuple(range(len(groups))), xticklabels=groups,
              xlim=(-0.45, len(groups) - 0.55))
+    configure_group_ticks(axis, groups)
     lines = _adjusted_primary_lines(result)
     axis.set_title(f"{title_prefix} at {target_text} V", pad=35 if lines else 8)
     if lines:

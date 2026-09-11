@@ -360,6 +360,12 @@ class LSVWorkflowState:
             self.comparisons = replacement
             self.mark_changed()
 
+    def add_comparison(self, comparison: ComparisonDraft) -> None:
+        error = comparison_draft_error(comparison, self.comparison_groups)
+        if error:
+            raise ValueError(error)
+        self.replace_comparisons((*self.comparisons, comparison))
+
     def build_request(self, records: Iterable[FileRecord]) -> LSVAnalysisRequest:
         errors = validate_lsv_workflow(self, records)
         self.validation_errors = errors
@@ -402,6 +408,25 @@ def _short_names(rows: Iterable[MetadataDraftRow], *, limit: int = 5) -> str:
     names = [row.sample_id.strip() or row.file_name for row in rows]
     shown = ", ".join(names[:limit])
     return shown + (f" …（共{len(names)}个）" if len(names) > limit else "")
+
+
+def comparison_draft_error(
+    draft: ComparisonDraft,
+    material_groups: Iterable[str],
+) -> str | None:
+    """Return one concise inline error for a proposed pairwise comparison."""
+
+    left = draft.left_group.strip()
+    right = draft.right_group.strip()
+    if not left or not right:
+        return "Left Group 与 Right Group 均不能为空。"
+    if left == right:
+        return "Left Group 与 Right Group 不能相同。"
+    valid = set(material_groups)
+    missing = tuple(group for group in (left, right) if group not in valid)
+    if missing:
+        return f"Comparison 引用了不存在的 Material Group：{', '.join(dict.fromkeys(missing))}。"
+    return None
 
 
 def validate_metadata_draft(rows: Iterable[MetadataDraftRow]) -> tuple[str, ...]:
@@ -468,10 +493,14 @@ def workflow_status_lines(workflow: LSVWorkflowState) -> tuple[str, ...]:
 def result_summary_text(result: LSVAnalysisResult) -> str:
     material_count = sum(item.manifest.electrode_type == "Material" for item in result.files)
     comparison_count = len({item.comparison for item in result.comparisons})
+    group_names = tuple(result.groups)
+    shown = ", ".join(group_names[:6])
+    if len(group_names) > 6:
+        shown += f" …（共 {len(group_names)} 个）"
     return (
         "✓ 分析完成\n"
         f"分析电位：{result.settings.target_potential_V:.6g} V｜正式指标：{result.settings.analysis_metric}｜"
-        f"Material 样本数：{material_count}｜Groups：{', '.join(result.groups)}｜"
+        f"Material 样本数：{material_count}｜Groups：{len(group_names)}｜Group names：{shown}｜"
         f"Comparisons：{comparison_count}"
     )
 
@@ -680,6 +709,7 @@ __all__ = [
     "StaleAnalysisResultError",
     "WorkflowFeedback",
     "comparison_display_rows",
+    "comparison_draft_error",
     "descriptive_display_rows",
     "execute_lsv_analysis",
     "format_number",

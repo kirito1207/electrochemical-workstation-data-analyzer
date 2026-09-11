@@ -7,6 +7,7 @@ from tkinter import ttk
 from typing import Callable
 
 from ..cursor import CursorReadingSet, InspectionCursorState
+from ..layout import DATA_PAGE_RIGHT_PREFERRED_PX, compact_filename
 from ..state import PreviewCollection
 
 
@@ -50,7 +51,12 @@ class CurveList(ttk.LabelFrame):
 
         body = ttk.Frame(self)
         body.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(body, height=190, highlightthickness=0)
+        self.canvas = tk.Canvas(
+            body,
+            width=DATA_PAGE_RIGHT_PREFERRED_PX,
+            height=190,
+            highlightthickness=0,
+        )
         scrollbar = ttk.Scrollbar(body, orient="vertical", command=self.canvas.yview)
         self.inner = ttk.Frame(self.canvas)
         self._window = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
@@ -85,7 +91,7 @@ class CurveList(ttk.LabelFrame):
             )
             ttk.Checkbutton(
                 self.inner,
-                text=curve.file_name,
+                text=compact_filename(curve.file_name),
                 variable=variable,
                 command=lambda key=curve.record_key, value=variable: self._callback(key, value.get()),
             ).grid(row=row, column=1, sticky="w")

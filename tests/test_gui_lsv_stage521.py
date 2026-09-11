@@ -250,7 +250,8 @@ def test_sign_qc_normal_and_mixed_states_are_explicit(synthetic_analysis_result)
 def test_result_summary_reports_material_groups_and_comparisons(synthetic_analysis_result):
     text = result_summary_text(synthetic_analysis_result)
     assert "Material 样本数：39" in text
-    assert "Groups：A, B, C" in text
+    assert "Groups：3" in text
+    assert "Group names：A, B, C" in text
     assert "Comparisons：3" in text
 
 
