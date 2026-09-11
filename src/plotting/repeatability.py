@@ -12,7 +12,7 @@ from export.figures import save_figure_formats
 from .common import colors_for_groups, new_figure, potential_label, style_axes
 
 
-def plot_repeatability(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Path, ...]:
+def build_repeatability_figure(result: LSVAnalysisResult):
     groups = result.groups
     colors = colors_for_groups(groups)
     metric = result.settings.analysis_metric
@@ -33,6 +33,16 @@ def plot_repeatability(result: LSVAnalysisResult, output_dir: str | Path) -> tup
     )
     axis.set_ylim(0.0, max(values) * 1.16)
     style_axes(axis)
+    return figure
+
+
+def plot_repeatability(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Path, ...]:
+    figure = build_repeatability_figure(result)
+    metric = result.settings.analysis_metric
+    target = potential_label(result.settings.target_potential_V)
     generated = save_figure_formats(figure, Path(output_dir) / f"cv_percent_{metric}_{target.replace('-', 'minus').replace('.', 'p')}V")
     plt.close(figure)
     return generated
+
+
+__all__ = ["build_repeatability_figure", "plot_repeatability"]

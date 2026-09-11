@@ -28,47 +28,46 @@ def _global_limits(result: LSVAnalysisResult) -> tuple[tuple[float, float], tupl
     return (x_min, x_max), (y_min - margin, y_max + margin)
 
 
-def plot_raw_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Path, ...]:
-    output = Path(output_dir)
+def build_raw_lsv_figure(result: LSVAnalysisResult, group: str):
+    """Build one group figure for file export or an embedded GUI preview."""
+
     x_limits, y_limits = _global_limits(result)
-    generated: list[Path] = []
     target = result.settings.target_potential_V
     groups = result.groups
     colors = colors_for_groups(groups)
-    for group in groups:
-        figure, axis = new_figure()
-        rows = [item for item in result.files if item.manifest.group == group]
-        material_label_used = False
-        bare_label_used = False
-        material_count = sum(item.manifest.electrode_type == "Material" for item in rows)
-        bare_count = sum(item.manifest.electrode_type == "Bare" for item in rows)
-        for item in rows:
-            x = item.data.potential_V
-            y = item.data.current_A * 1e6
-            if item.manifest.electrode_type == "Bare":
-                label = f"Bare (n={bare_count})" if not bare_label_used else None
-                axis.plot(x, y, color="#111111", linewidth=1.8, linestyle="--", label=label)
-                bare_label_used = True
-            else:
-                label = f"Material electrodes (n={material_count})" if not material_label_used else None
-                axis.plot(x, y, color=colors[group], linewidth=0.8, alpha=0.68, label=label)
-                material_label_used = True
-        axis.axvline(
-            target,
-            color="#666666",
-            linestyle=":",
-            linewidth=1.1,
-            label=f"Analysis potential = {potential_label(target)} V",
-        )
-        axis.set(
-            title=f"Group {group} raw LSV",
-            xlabel="Potential / V",
-            ylabel="Current / µA",
-            xlim=x_limits,
-            ylim=y_limits,
-        )
-        style_axes(axis)
-        axis.legend(frameon=False, loc="best")
+    if group not in groups:
+        raise ValueError(f"Unknown group: {group}")
+    figure, axis = new_figure()
+    rows = [item for item in result.files if item.manifest.group == group]
+    material_label_used = False
+    bare_label_used = False
+    material_count = sum(item.manifest.electrode_type == "Material" for item in rows)
+    bare_count = sum(item.manifest.electrode_type == "Bare" for item in rows)
+    for item in rows:
+        x = item.data.potential_V
+        y = item.data.current_A * 1e6
+        if item.manifest.electrode_type == "Bare":
+            label = f"Bare (n={bare_count})" if not bare_label_used else None
+            axis.plot(x, y, color="#111111", linewidth=1.8, linestyle="--", label=label)
+            bare_label_used = True
+        else:
+            label = f"Material electrodes (n={material_count})" if not material_label_used else None
+            axis.plot(x, y, color=colors[group], linewidth=0.8, alpha=0.68, label=label)
+            material_label_used = True
+    axis.axvline(target, color="#666666", linestyle=":", linewidth=1.1,
+                 label=f"Analysis potential = {potential_label(target)} V")
+    axis.set(title=f"Group {group} raw LSV", xlabel="Potential / V", ylabel="Current / µA",
+             xlim=x_limits, ylim=y_limits)
+    style_axes(axis)
+    axis.legend(frameon=False, loc="best")
+    return figure
+
+
+def plot_raw_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Path, ...]:
+    output = Path(output_dir)
+    generated: list[Path] = []
+    for group in result.groups:
+        figure = build_raw_lsv_figure(result, group)
         generated.extend(
             save_figure_formats(
                 figure, output / f"group_{safe_filename_component(group)}_raw_lsv"
@@ -76,3 +75,6 @@ def plot_raw_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Pat
         )
         plt.close(figure)
     return tuple(generated)
+
+
+__all__ = ["build_raw_lsv_figure", "plot_raw_lsv"]

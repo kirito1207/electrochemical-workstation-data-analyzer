@@ -1,4 +1,4 @@
-"""Responsive Chinese ttk main window for Stage 5.1."""
+"""Responsive Chinese ttk main window with the Stage 5.2 LSV workflow."""
 
 from __future__ import annotations
 
@@ -17,9 +17,17 @@ from .cursor import (
 )
 from .dialogs import confirm_close_while_busy, show_record_details
 from .formatting import parameter_rows
+from .lsv_export import export_lsv_result, open_output_directory
+from .lsv_workflow import (
+    GUIWorkflowValidationError,
+    LSVAnalysisCompleted,
+    StaleAnalysisResultError,
+    execute_lsv_analysis,
+)
 from .pages import IT_STAGE_MESSAGE, LSV_STAGE_MESSAGE, WELCOME_MESSAGE, unsupported_message
 from .state import AppState, FileRecord, PreviewDisplayState
-from .widgets import CurveList, FileTable, LogPanel, PlotPreview, WorkspaceTabs
+from .widgets import (CurveList, FileTable, LogPanel, LSVResultPlotPanel,
+                      LSVResultsPanel, LSVSettingsPanel, PlotPreview, WorkspaceTabs)
 from .workspaces import WorkspaceManager, WorkspaceSession
 
 
@@ -106,8 +114,7 @@ class MainWindow:
         workspace = ttk.Frame(shell)
         workspace.grid(row=0, column=1, sticky="nsew")
         workspace.columnconfigure(0, weight=1)
-        workspace.rowconfigure(3, weight=3)
-        workspace.rowconfigure(4, weight=2)
+        workspace.rowconfigure(3, weight=1)
 
         self.workspace_tabs = WorkspaceTabs(
             workspace,
@@ -144,15 +151,28 @@ class MainWindow:
             side="left", fill="x", expand=True, padx=(8, 0)
         )
 
-        table_frame = ttk.LabelFrame(workspace, text="文件列表")
-        table_frame.grid(row=3, column=0, sticky="nsew")
+        self.workflow_tabs = ttk.Notebook(workspace)
+        self.workflow_tabs.grid(row=3, column=0, sticky="nsew")
+        self.data_tab = ttk.Frame(self.workflow_tabs)
+        self.data_tab.columnconfigure(0, weight=1)
+        self.data_tab.rowconfigure(0, weight=3)
+        self.data_tab.rowconfigure(1, weight=2)
+        self.settings_tab = ttk.Frame(self.workflow_tabs)
+        self.results_tab = ttk.Frame(self.workflow_tabs)
+        self.figures_tab = ttk.Frame(self.workflow_tabs)
+        for frame, label in ((self.data_tab, "数据与曲线"), (self.settings_tab, "分析设置"),
+                             (self.results_tab, "统计结果"), (self.figures_tab, "结果图表")):
+            self.workflow_tabs.add(frame, text=label)
+
+        table_frame = ttk.LabelFrame(self.data_tab, text="文件列表")
+        table_frame.grid(row=0, column=0, sticky="nsew")
         table_frame.columnconfigure(0, weight=1)
         table_frame.rowconfigure(0, weight=1)
         self.file_table = FileTable(table_frame, on_select=self._record_selected)
         self.file_table.grid(row=0, column=0, sticky="nsew")
 
-        lower = ttk.Panedwindow(workspace, orient="horizontal")
-        lower.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
+        lower = ttk.Panedwindow(self.data_tab, orient="horizontal")
+        lower.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
         self.plot_preview = PlotPreview(
             lower,
             on_cursor_clicked=self._cursor_clicked,
@@ -176,6 +196,22 @@ class MainWindow:
         self.parameter_box.grid(row=1, column=0, sticky="ew", pady=(6, 0))
         self.log_panel = LogPanel(info)
         self.log_panel.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
+
+        for frame in (self.settings_tab, self.results_tab, self.figures_tab):
+            frame.columnconfigure(0, weight=1); frame.rowconfigure(0, weight=1)
+        self.lsv_settings = LSVSettingsPanel(
+            self.settings_tab, on_change=self._lsv_setting_changed,
+            on_confirm=self._confirm_lsv_metadata, on_run=self._run_lsv_analysis,
+            on_use_cursor=self._use_cursor_as_target,
+        )
+        self.lsv_settings.grid(row=0, column=0, sticky="nsew")
+        self.lsv_results = LSVResultsPanel(self.results_tab)
+        self.lsv_results.grid(row=0, column=0, sticky="nsew")
+        self.lsv_figures = LSVResultPlotPanel(
+            self.figures_tab, on_export=self._export_lsv_analysis,
+            on_open_folder=self._open_lsv_output,
+        )
+        self.lsv_figures.grid(row=0, column=0, sticky="nsew")
 
         self.status_text = tk.StringVar(value="就绪")
         ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 4)).pack(
@@ -271,6 +307,10 @@ class MainWindow:
                 if item.experiment_type.upper() == route
             )
         self.file_table.set_records(records)
+        for tab in (1, 2, 3):
+            self.workflow_tabs.tab(tab, state="normal" if route == "LSV" else "disabled")
+        if route != "LSV":
+            self.workflow_tabs.select(0)
         if route in {"LSV", "i-t"}:
             self._render_technique_preview(route)
         else:
@@ -284,6 +324,14 @@ class MainWindow:
                 "请选择 LSV 或 i-t 页面查看曲线" if route == "all" else unsupported_message(route)
             )
         self._update_status()
+        self._refresh_lsv_workflow()
+
+    def _refresh_lsv_workflow(self) -> None:
+        workflow = self.workspace.lsv_workflow
+        self.lsv_settings.render(workflow, busy=self.runner.busy)
+        self.lsv_results.render(workflow)
+        if self.current_route == "LSV":
+            self.lsv_figures.render(workflow)
 
     def _render_technique_preview(self, experiment_type: str) -> None:
         collection = self.controller.build_preview_collection(
@@ -456,12 +504,26 @@ class MainWindow:
                 f"{workspace_name} 正在解析 {index}/{total}：{Path(path).name}"
             )
         elif event.kind == "result":
+            if isinstance(event.payload, LSVAnalysisCompleted):
+                completed = event.payload
+                session = self.workspace_manager.get(completed.workspace_id)
+                if session is None:
+                    return
+                session.lsv_workflow.accept_result(completed.request, completed.result)
+                self._log("LSV 正式分析完成；默认全部样本纳入，MAD 仅作标记。", session=session)
+                for warning in completed.result.warnings:
+                    self._log(f"方向一致性警告：{warning}", session=session)
+                if session.workspace_id == self.workspace.workspace_id:
+                    self._refresh_lsv_workflow()
+                    self.workflow_tabs.select(self.results_tab)
+                return
             workspace_id, supplied_records = event.payload
             records = tuple(supplied_records)
             session = self.workspace_manager.get(workspace_id)
             if session is None:
                 return
             session.state.add_records(records)
+            session.lsv_workflow.sync_records(session.state.records)
             successful_routes = tuple(
                 dict.fromkeys(record.route for record in records if record.parse_success)
             )
@@ -491,6 +553,7 @@ class MainWindow:
             self._running_workspace_id = None
             self._set_busy(False)
             self._update_status()
+            self._refresh_lsv_workflow()
 
     def _record_selected(self, record: FileRecord | None) -> None:
         selected_key = record.key if record is not None else None
@@ -531,6 +594,7 @@ class MainWindow:
         if not selected:
             return
         count = self.state.remove([record.path for record in selected])
+        self.workspace.lsv_workflow.sync_records(self.state.records)
         self._log(f"已从当前工作区移除 {count} 个文件；源文件未被修改。")
         self._set_route(self.current_route)
 
@@ -541,6 +605,83 @@ class MainWindow:
             self.workspace.clear_data()
             self._log("当前工作区文件列表已清空；其他工作区和源文件未被修改。")
             self._set_route(self.current_route)
+
+    def _lsv_setting_changed(self, action: str, *values) -> None:
+        workflow = self.workspace.lsv_workflow
+        try:
+            if action == "metadata": workflow.update_metadata(*values)
+            elif action == "batch": workflow.batch_update(*values)
+            elif action == "target": workflow.set_target_potential(values[0])
+            elif action == "metric": workflow.set_metric(values[0])
+            elif action == "add_comparison": workflow.replace_comparisons((*workflow.comparisons, values[0]))
+            elif action == "delete_comparisons":
+                removed = set(values[0]); workflow.replace_comparisons(item for i, item in enumerate(workflow.comparisons) if i not in removed)
+        except ValueError as error:
+            self._log(f"设置未更新：{error}")
+        self._refresh_lsv_workflow()
+
+    def _confirm_lsv_metadata(self) -> None:
+        try:
+            manifest = self.workspace.lsv_workflow.confirm_metadata()
+        except GUIWorkflowValidationError as error:
+            self._log(f"样本信息无法确认：{error}")
+        else:
+            self._log(f"已由用户确认 {len(manifest.entries)} 个 LSV 样本的 metadata。")
+        self._refresh_lsv_workflow()
+
+    def _use_cursor_as_target(self) -> None:
+        cursor = self.workspace.cursor_by_route["LSV"]
+        if not cursor.visible or cursor.requested_x is None:
+            self._log("当前没有有效的 LSV inspection cursor；分析电位未改变。")
+            return
+        self.workspace.lsv_workflow.set_target_potential(cursor.requested_x)
+        self._log(f"已显式复制游标电位为分析电位：{cursor.requested_x:.6g} V；尚未运行分析。")
+        self._refresh_lsv_workflow()
+
+    def _run_lsv_analysis(self) -> None:
+        try:
+            request = self.workspace.lsv_workflow.build_request(self.state.records)
+        except GUIWorkflowValidationError as error:
+            self._log("无法开始正式分析：" + "；".join(error.errors))
+            self._refresh_lsv_workflow()
+            return
+        workspace_id = self.workspace.workspace_id
+        self._running_workspace_id = workspace_id
+        self._set_busy(True)
+        self._log("开始后台运行 Generic LSV 正式分析。")
+        def task(cancel_event, emit):
+            if cancel_event.is_set():
+                raise RuntimeError("分析已取消")
+            return LSVAnalysisCompleted(workspace_id, request, execute_lsv_analysis(request))
+        self.runner.submit(task)
+
+    def _export_lsv_analysis(self) -> None:
+        try:
+            result = self.workspace.lsv_workflow.require_exportable_result()
+        except StaleAnalysisResultError as error:
+            self._log(f"无法导出：{error}")
+            return
+        selected = filedialog.askdirectory(parent=self.root, title="选择结果保存位置")
+        if not selected:
+            return
+        try:
+            run = export_lsv_result(result, selected)
+        except Exception as error:
+            self._log(f"导出失败：{type(error).__name__}：{error}")
+            return
+        self.workspace.lsv_workflow.last_export_directory = str(run.output_directory)
+        self._log(f"已导出 {len(run.generated_files)} 个文件：{run.output_directory}")
+        self._refresh_lsv_workflow()
+
+    def _open_lsv_output(self) -> None:
+        directory = self.workspace.lsv_workflow.last_export_directory
+        if directory:
+            try:
+                open_output_directory(directory)
+            except Exception as error:
+                self._log(f"无法打开结果文件夹：{type(error).__name__}：{error}")
+        else:
+            self._log("当前 Workspace 尚无已导出的结果目录。")
 
     def _show_details(self) -> None:
         if self.current_record is None:

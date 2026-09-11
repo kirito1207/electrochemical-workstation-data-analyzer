@@ -29,6 +29,39 @@ def _group_curve(result: LSVAnalysisResult, group: str):
     return rows[0].data.potential_V, np.mean(currents, axis=0), np.std(currents, axis=0, ddof=1)
 
 
+def build_mean_lsv_figure(result: LSVAnalysisResult, group: str | None = None):
+    """Build a group mean±SD figure, or the all-group mean overlay."""
+
+    groups = result.groups
+    colors = colors_for_groups(groups)
+    curves = {name: _group_curve(result, name) for name in groups}
+    lower = min(float(np.min(mean - sd)) for _, mean, sd in curves.values())
+    upper = max(float(np.max(mean + sd)) for _, mean, sd in curves.values())
+    margin = max((upper - lower) * 0.06, 0.05)
+    y_limits = (lower - margin, upper + margin)
+    target = result.settings.target_potential_V
+    if group is not None:
+        potential, mean, sd = curves[group]
+        n = result.summary(group, "signed").statistics.n
+        figure, axis = new_figure()
+        axis.plot(potential, mean, color=colors[group], linewidth=1.8, label=f"Mean (n={n})")
+        axis.fill_between(potential, mean - sd, mean + sd, color=colors[group], alpha=0.22, linewidth=0, label="± SD")
+        title = f"Group {group} Material mean LSV ± SD"
+    else:
+        figure, axis = new_figure(width=6.6, height=4.6)
+        for name, (potential, mean, _sd) in curves.items():
+            n = result.summary(name, "signed").statistics.n
+            axis.plot(potential, mean, color=colors[name], linewidth=1.8, label=f"Group {name} mean (n={n})")
+        potential = next(iter(curves.values()))[0]
+        title = "Material mean LSV comparison"
+    axis.axvline(target, color="#666666", linestyle=":", linewidth=1.1, label=f"Analysis potential = {potential_label(target)} V")
+    axis.set(title=title, xlabel="Potential / V", ylabel="Current / µA",
+             xlim=(float(potential[0]), float(potential[-1])), ylim=y_limits)
+    style_axes(axis)
+    axis.legend(frameon=False)
+    return figure
+
+
 def plot_mean_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Path, ...]:
     output = Path(output_dir)
     groups = result.groups
@@ -42,20 +75,7 @@ def plot_mean_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Pa
     generated: list[Path] = []
 
     for group, (potential, mean, sd) in curves.items():
-        n = result.summary(group, "signed").statistics.n
-        figure, axis = new_figure()
-        axis.plot(potential, mean, color=colors[group], linewidth=1.8, label=f"Mean (n={n})")
-        axis.fill_between(potential, mean - sd, mean + sd, color=colors[group], alpha=0.22, linewidth=0, label="± SD")
-        axis.axvline(target, color="#666666", linestyle=":", linewidth=1.1, label=f"Analysis potential = {potential_label(target)} V")
-        axis.set(
-            title=f"Group {group} Material mean LSV ± SD",
-            xlabel="Potential / V",
-            ylabel="Current / µA",
-            xlim=(float(potential[0]), float(potential[-1])),
-            ylim=y_limits,
-        )
-        style_axes(axis)
-        axis.legend(frameon=False)
+        figure = build_mean_lsv_figure(result, group)
         generated.extend(
             save_figure_formats(
                 figure, output / f"group_{safe_filename_component(group)}_mean_sd_lsv"
@@ -63,20 +83,7 @@ def plot_mean_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Pa
         )
         plt.close(figure)
 
-    figure, axis = new_figure(width=6.6, height=4.6)
-    for group, (potential, mean, _sd) in curves.items():
-        n = result.summary(group, "signed").statistics.n
-        axis.plot(potential, mean, color=colors[group], linewidth=1.8, label=f"Group {group} mean (n={n})")
-    axis.axvline(target, color="#666666", linestyle=":", linewidth=1.1, label=f"Analysis potential = {potential_label(target)} V")
-    axis.set(
-        title="Material mean LSV comparison",
-        xlabel="Potential / V",
-        ylabel="Current / µA",
-        xlim=(float(next(iter(curves.values()))[0][0]), float(next(iter(curves.values()))[0][-1])),
-        ylim=y_limits,
-    )
-    style_axes(axis)
-    axis.legend(frameon=False)
+    figure = build_mean_lsv_figure(result)
     group_stem = (
         "ABC"
         if groups == ("A", "B", "C")
@@ -85,3 +92,6 @@ def plot_mean_lsv(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Pa
     generated.extend(save_figure_formats(figure, output / f"groups_{group_stem}_mean_lsv_overlay"))
     plt.close(figure)
     return tuple(generated)
+
+
+__all__ = ["build_mean_lsv_figure", "plot_mean_lsv"]

@@ -1,6 +1,6 @@
-"""Stage 5.1 LSV page boundary."""
+"""Stage 5.2 Generic LSV workflow description."""
 
 LSV_STAGE_MESSAGE = (
-    "LSV 文件加载与原始曲线预览。下一阶段将进行："
-    "分组 metadata → 分析电位 → comparisons → 正式统计。"
+    "Generic LSV：原始曲线 → 用户确认 metadata → 分析设置与 comparisons "
+    "→ 正式统计、QC、科研图和完整导出。"
 )

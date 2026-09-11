@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.1.4
+# chi760e-h2o2-analyzer — Stage 5.2
 
-当前开发状态：**Stage 5.1.4（精确数值游标控制）**。
+当前开发状态：**Stage 5.2（Generic LSV 正式分析 GUI）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -247,6 +247,22 @@ Windows 验收发现，程序化 `Treeview.selection_set()` 可能派发 `<<Tree
 当 plot preview 或游标输入框具有焦点时，←/→ 会移动到前一个或后一个真实 x-axis sample，不假定固定 potential increment 或 sample interval。处于两点之间时分别跳到左右包围采样点，到达边界后保持边界。按键没有进行全局绑定，因此不会影响其他 Entry 或 Text 控件的正常编辑。
 
 空值、非数值、NaN、Inf 或全部可见曲线范围外的输入均采用安静的 inline 状态：隐藏 vertical line、读数显示“—”，并在输入框旁显示简短提示，不弹窗、不写大量错误日志。每个 Workspace 分别保存输入文本、有效 cursor value、visible state 和提示。该 inspection cursor 仍不连接 analysis target potential、i-t StepProtocol、样本 inclusion 或统计逻辑。
+
+## Stage 5.2 Generic LSV 正式分析 GUI
+
+LSV 页面现提供四个紧凑工作流标签：`数据与曲线`、`分析设置`、`统计结果`、`结果图表`。每个 Workspace 独立保存 LSV metadata 草稿、用户确认的 manifest、分析电位、signed/magnitude 指标、用户声明的 comparisons、分析结果、QC 和结果图选择；Workspace 名称绝不会被自动当作科研 Group。
+
+分析设置表对每个成功解析的 LSV 文件显示并允许编辑 Include、Sample ID、Group、Electrode Type 和 Notes。`suggest_generic_manifest()` 只生成可编辑建议，界面明确标记“尚未确认”；用户必须点击“确认样本信息”，由 `confirmed_generic_manifest()` 建立不可变 manifest 后才能正式统计。Include 与 raw preview visibility 相互独立；Bare 可纳入逐文件输出和 raw curves，但不进入 Material 描述统计、MAD 或显著性检验。当前 GUI 默认全部纳入，MAD 只标记 Possible outlier；手工 exclusion workflow 留待后续独立审计界面实现。
+
+分析电位可直接输入，也可通过显式“使用当前游标电位”按钮从有效 LSV inspection cursor 复制。鼠标或键盘移动 inspection cursor 不会自动修改分析电位。正式分析仅调用现有 `analyze_lsv_with_manifest()` 后端，在 worker thread 中执行；GUI 不重新实现插值、Welch、Mann–Whitney、Holm、Hedges' g、bootstrap CI、MAD 或 current sign QC。
+
+Comparison 只由用户明确添加，并记录 Left Group、Right Group、Primary/Exploratory、Holm Family 和名称。Holm correction 仍仅作用于同一 family 的 primary Welch comparisons。运行前会统一检查 confirmed manifest、included Material、Sample ID、Group、分析电位共同范围、comparison group 与最小样本数；错误以内联中文信息呈现，不启动半完成分析。
+
+统计结果页展示当前 metric 的 group descriptive statistics、Welch/Mann–Whitney、raw/Holm p、mean difference 与 CI、Hedges' g 与 CI、sign QC、MAD 标记和 warning。设置发生变化后，现有结果立即标记为 stale，并在重新分析前禁止导出。结果图表页一次显示一张后端科研图，可切换 raw curves、mean ± SD、mean overlay、selected-potential signed/magnitude scatter 和 CV%。
+
+“导出当前完整分析结果”只导出当前内存中的非过期 result，不会重新分析。每次导出创建新的时间戳目录，包含 Excel、CSV、PNG 300 dpi、SVG、PDF 和 provenance JSON log；同一时间戳重复导出会使用新后缀，不覆盖旧目录。Stage 5.2 不提供 i-t 正式 GUI（计划在 Stage 5.3 接入）、CV/CA/ML 或 Windows exe。
+
+Windows Stage 5.2 人工验收清单见 `docs/windows_stage52_checklist.md`。
 
 ## 安装与测试
 
