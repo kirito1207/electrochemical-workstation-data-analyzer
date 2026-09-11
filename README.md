@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.2
+# chi760e-h2o2-analyzer — Stage 5.2.1
 
-当前开发状态：**Stage 5.2（Generic LSV 正式分析 GUI）**。
+当前开发状态：**Stage 5.2.1（Generic LSV GUI 易用性、校验与交互加固）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -263,6 +263,20 @@ Comparison 只由用户明确添加，并记录 Left Group、Right Group、Prima
 “导出当前完整分析结果”只导出当前内存中的非过期 result，不会重新分析。每次导出创建新的时间戳目录，包含 Excel、CSV、PNG 300 dpi、SVG、PDF 和 provenance JSON log；同一时间戳重复导出会使用新后缀，不覆盖旧目录。Stage 5.2 不提供 i-t 正式 GUI（计划在 Stage 5.3 接入）、CV/CA/ML 或 Windows exe。
 
 Windows Stage 5.2 人工验收清单见 `docs/windows_stage52_checklist.md`。
+
+## Stage 5.2.1 Generic LSV GUI usability hardening
+
+Stage 5.2 首轮 Windows 验收后的易用性加固已完成。Confirm 与 Run 的失败原因现在直接显示在分析设置页，不再只写入默认折叠日志；重复 `(Group, Sample ID)`、缺失 Group/Sample ID/电极类型会汇总为简洁中文，并显示少量对象预览。成功确认、分析进行中、完成和 stale result 也有明确的 inline feedback 与四步 workflow 状态。
+
+Metadata 表对 included 且必填字段缺失的行使用轻量“未设置”提示。表格支持鼠标上下连续拖选、Ctrl/Shift 原有选择、Ctrl+A、全选和取消选择；拖动超过小阈值才按连续行选择处理，因此普通双击编辑仍保留。批量 Group/电极类型操作只作用于当前 selection，不改变 raw preview visibility 或 Include。
+
+Generic manifest 继续优先保存绝对 `file_path`，允许同一 Workspace 导入多个目录；不同目录同名文件的 `relative_path` 会保留可区分 provenance。Sample ID inference 仍只是可编辑文件名建议，正式分析只使用用户确认后的 `ManifestEntry.sample_id`。
+
+Workspace 切换现在显式重置未提交 comparison editor 草稿及不存在的 Combobox 文本；已点击“添加”的 ComparisonDraft 仍在各自 Workspace 中独立保存。结果页增加分析摘要、中文列名、MAD 无 flag 的明确成功状态，以及 sign QC 正常/mixed 的易读提示。
+
+GUI 的指定电位 magnitude/signed scatter 支持 Material individual point hover，显示用户确认后的 Sample ID 和对应电流。Hover 只更新内存 annotation，不重新分析或重建 Figure；Bare、mean marker 和 SD errorbar 不参与 hover。静态 PNG/SVG/PDF 导出继续不增加永久 Sample ID 标签，科研数值与 Stage 3/3.1 完全一致。
+
+Windows Stage 5.2.1 人工验收清单见 `docs/windows_stage521_checklist.md`。i-t 正式 GUI、CV、CA、ML 和 Windows exe 均未进入本阶段。
 
 ## 安装与测试
 

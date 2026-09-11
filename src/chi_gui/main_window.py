@@ -1,4 +1,4 @@
-"""Responsive Chinese ttk main window with the Stage 5.2 LSV workflow."""
+"""Responsive Chinese ttk main window with Stage 5.2.1 usability hardening."""
 
 from __future__ import annotations
 
@@ -153,6 +153,7 @@ class MainWindow:
 
         self.workflow_tabs = ttk.Notebook(workspace)
         self.workflow_tabs.grid(row=3, column=0, sticky="nsew")
+        self.workflow_tabs.bind("<<NotebookTabChanged>>", self._workflow_tab_changed)
         self.data_tab = ttk.Frame(self.workflow_tabs)
         self.data_tab.columnconfigure(0, weight=1)
         self.data_tab.rowconfigure(0, weight=3)
@@ -328,10 +329,18 @@ class MainWindow:
 
     def _refresh_lsv_workflow(self) -> None:
         workflow = self.workspace.lsv_workflow
-        self.lsv_settings.render(workflow, busy=self.runner.busy)
+        self.lsv_settings.render(
+            workflow,
+            busy=self.runner.busy,
+            workspace_token=self.workspace.workspace_id,
+        )
         self.lsv_results.render(workflow)
-        if self.current_route == "LSV":
+        if self.current_route == "LSV" and self.workflow_tabs.select() == str(self.figures_tab):
             self.lsv_figures.render(workflow)
+
+    def _workflow_tab_changed(self, _event=None) -> None:
+        if self.current_route == "LSV" and self.workflow_tabs.select() == str(self.figures_tab):
+            self.lsv_figures.render(self.workspace.lsv_workflow)
 
     def _render_technique_preview(self, experiment_type: str) -> None:
         collection = self.controller.build_preview_collection(
@@ -545,6 +554,11 @@ class MainWindow:
                 self._set_route(session.current_route)
         elif event.kind == "error":
             session = self.workspace_manager.get(self._running_workspace_id or "")
+            if session is not None and session.lsv_workflow.analysis_running:
+                session.lsv_workflow.analysis_running = False
+                session.lsv_workflow.set_feedback(
+                    "warning", "正式分析失败", (f"{type(event.payload).__name__}：{event.payload}",)
+                )
             self._log(
                 f"后台任务异常：{type(event.payload).__name__}：{event.payload}",
                 session=session,
@@ -617,6 +631,7 @@ class MainWindow:
             elif action == "delete_comparisons":
                 removed = set(values[0]); workflow.replace_comparisons(item for i, item in enumerate(workflow.comparisons) if i not in removed)
         except ValueError as error:
+            workflow.set_feedback("warning", "设置未更新", (str(error),))
             self._log(f"设置未更新：{error}")
         self._refresh_lsv_workflow()
 
@@ -624,8 +639,12 @@ class MainWindow:
         try:
             manifest = self.workspace.lsv_workflow.confirm_metadata()
         except GUIWorkflowValidationError as error:
+            self.workspace.lsv_workflow.set_feedback("warning", "样本信息无法确认", error.errors)
             self._log(f"样本信息无法确认：{error}")
         else:
+            self.workspace.lsv_workflow.set_feedback(
+                "success", f"样本信息已确认：{len(manifest.entries)} 个文件"
+            )
             self._log(f"已由用户确认 {len(manifest.entries)} 个 LSV 样本的 metadata。")
         self._refresh_lsv_workflow()
 
@@ -642,18 +661,22 @@ class MainWindow:
         try:
             request = self.workspace.lsv_workflow.build_request(self.state.records)
         except GUIWorkflowValidationError as error:
+            self.workspace.lsv_workflow.set_feedback("warning", "无法开始正式分析", error.errors)
             self._log("无法开始正式分析：" + "；".join(error.errors))
             self._refresh_lsv_workflow()
             return
         workspace_id = self.workspace.workspace_id
         self._running_workspace_id = workspace_id
         self._set_busy(True)
+        self.workspace.lsv_workflow.analysis_running = True
+        self.workspace.lsv_workflow.set_feedback("busy", "正在分析…")
         self._log("开始后台运行 Generic LSV 正式分析。")
         def task(cancel_event, emit):
             if cancel_event.is_set():
                 raise RuntimeError("分析已取消")
             return LSVAnalysisCompleted(workspace_id, request, execute_lsv_analysis(request))
         self.runner.submit(task)
+        self._refresh_lsv_workflow()
 
     def _export_lsv_analysis(self) -> None:
         try:

@@ -33,6 +33,53 @@ class StaleAnalysisResultError(ValueError):
     """Raised when export is requested for settings that no longer match a result."""
 
 
+@dataclass(frozen=True, slots=True)
+class WorkflowFeedback:
+    level: str = "info"
+    title: str = ""
+    details: tuple[str, ...] = ()
+
+    @property
+    def text(self) -> str:
+        prefix = {"success": "✓", "warning": "⚠", "busy": "…"}.get(self.level, "")
+        lines = ([f"{prefix} {self.title}".strip()] if self.title else []) + [
+            f"• {detail}" for detail in self.details
+        ]
+        return "\n".join(lines)
+
+
+@dataclass(slots=True)
+class ComparisonEditorDraft:
+    """Ephemeral widget draft; committed comparisons remain in workflow state."""
+
+    workspace_token: str | None = None
+    left_group: str = ""
+    right_group: str = ""
+    role: str = "Primary"
+    holm_family: str = "primary"
+    name: str = ""
+
+    def synchronize(self, workspace_token: str, groups: Iterable[str]) -> bool:
+        available = tuple(groups)
+        changed_workspace = workspace_token != self.workspace_token
+        if changed_workspace:
+            self.workspace_token = workspace_token
+            self.clear_after_commit()
+        else:
+            if self.left_group not in available:
+                self.left_group = ""
+            if self.right_group not in available:
+                self.right_group = ""
+        return changed_workspace
+
+    def clear_after_commit(self) -> None:
+        self.left_group = ""
+        self.right_group = ""
+        self.role = "Primary"
+        self.holm_family = "primary"
+        self.name = ""
+
+
 @dataclass(slots=True)
 class MetadataDraftRow:
     record_key: str
@@ -95,7 +142,10 @@ class LSVAnalysisCompleted:
 def _common_root(paths: tuple[Path, ...]) -> Path:
     if not paths:
         return Path(".")
-    common = Path(os.path.commonpath([str(path.resolve()) for path in paths]))
+    try:
+        common = Path(os.path.commonpath([str(path.resolve()) for path in paths]))
+    except ValueError:  # Different Windows drives have no common filesystem root.
+        return Path(".")
     return common.parent if common.is_file() else common
 
 
@@ -150,10 +200,25 @@ class LSVWorkflowState:
     selected_plot_group: str = "ALL"
     last_export_directory: str | None = None
     validation_errors: tuple[str, ...] = ()
+    feedback: WorkflowFeedback = field(default_factory=WorkflowFeedback)
+    analysis_running: bool = False
 
     @property
     def groups(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(row.group.strip() for row in self.metadata_rows if row.include and row.group.strip()))
+
+    @property
+    def comparison_groups(self) -> tuple[str, ...]:
+        if not self.has_confirmed_manifest:
+            return ()
+        assert self.confirmed_manifest is not None
+        return tuple(
+            dict.fromkeys(
+                entry.group
+                for entry in self.confirmed_manifest.entries
+                if entry.electrode_type == "Material" and entry.group
+            )
+        )
 
     @property
     def has_confirmed_manifest(self) -> bool:
@@ -184,6 +249,7 @@ class LSVWorkflowState:
             self.manifest_status = "样本信息已修改，尚未确认"
         if self.analysis_result is not None:
             self.result_stale = True
+        self.set_feedback("info", "设置已修改，请检查并按需重新确认/分析")
 
     def sync_records(self, records: Iterable[FileRecord]) -> None:
         lsv_records = tuple(
@@ -217,6 +283,12 @@ class LSVWorkflowState:
                     notes=suggestion.notes if suggestion else "",
                 )
             )
+        relative_counts: dict[str, int] = {}
+        for row in rows:
+            relative_counts[row.relative_path] = relative_counts.get(row.relative_path, 0) + 1
+        for row in rows:
+            if relative_counts[row.relative_path] > 1:
+                row.relative_path = str(Path(row.file_path).resolve())
         self.metadata_rows = rows
         if changed:
             self.confirmed_manifest = None
@@ -225,6 +297,10 @@ class LSVWorkflowState:
             )
             if self.analysis_result is not None:
                 self.result_stale = True
+            self.set_feedback(
+                "warning",
+                "样本文件列表已变化，请检查并确认 metadata" if rows else "尚未导入可分析的 LSV 文件",
+            )
 
     def update_metadata(self, record_key: str, field_name: str, value: object) -> None:
         row = next(row for row in self.metadata_rows if row.record_key == record_key)
@@ -244,6 +320,10 @@ class LSVWorkflowState:
 
     def confirm_metadata(self) -> ExperimentManifest:
         entries = tuple(row.to_manifest_entry() for row in self.metadata_rows if row.include)
+        draft_errors = validate_metadata_draft(self.metadata_rows)
+        if draft_errors:
+            self.validation_errors = draft_errors
+            raise GUIWorkflowValidationError(draft_errors)
         try:
             manifest = confirmed_generic_manifest(entries, source="GUI user-confirmed Generic LSV metadata")
         except ValueError as error:
@@ -252,9 +332,13 @@ class LSVWorkflowState:
         self.confirmed_manifest = manifest
         self.manifest_status = f"已确认：{len(entries)} 个文件"
         self.validation_errors = ()
+        self.set_feedback("success", f"样本信息已确认：{len(entries)} 个文件")
         if self.analysis_result is not None and self.current_signature() != self.result_signature:
             self.result_stale = True
         return manifest
+
+    def set_feedback(self, level: str, title: str, details: Iterable[str] = ()) -> None:
+        self.feedback = WorkflowFeedback(level, title, tuple(details))
 
     def set_target_potential(self, value: float) -> None:
         if not math.isfinite(value):
@@ -280,6 +364,7 @@ class LSVWorkflowState:
         errors = validate_lsv_workflow(self, records)
         self.validation_errors = errors
         if errors:
+            self.set_feedback("warning", "无法开始正式分析", errors)
             raise GUIWorkflowValidationError(errors)
         assert self.confirmed_manifest is not None
         settings = AnalysisSettings(
@@ -301,6 +386,8 @@ class LSVWorkflowState:
         self.result_signature = request.signature
         self.result_stale = self.current_signature() != request.signature
         self.validation_errors = ()
+        self.analysis_running = False
+        self.set_feedback("success", "分析完成")
 
     def require_exportable_result(self) -> LSVAnalysisResult:
         if self.analysis_result is None:
@@ -309,6 +396,104 @@ class LSVWorkflowState:
             self.result_stale = True
             raise StaleAnalysisResultError("设置已修改，请重新分析后导出")
         return self.analysis_result
+
+
+def _short_names(rows: Iterable[MetadataDraftRow], *, limit: int = 5) -> str:
+    names = [row.sample_id.strip() or row.file_name for row in rows]
+    shown = ", ".join(names[:limit])
+    return shown + (f" …（共{len(names)}个）" if len(names) > limit else "")
+
+
+def validate_metadata_draft(rows: Iterable[MetadataDraftRow]) -> tuple[str, ...]:
+    """Produce concise Chinese GUI validation before the immutable backend manifest."""
+
+    included = tuple(row for row in rows if row.include)
+    errors: list[str] = []
+    if not included:
+        return ("没有纳入任何 LSV 文件",)
+    missing_group = tuple(row for row in included if not row.group.strip())
+    missing_sample = tuple(row for row in included if not row.sample_id.strip())
+    invalid_electrode = tuple(
+        row for row in included if row.electrode_type not in {"Material", "Bare"}
+    )
+    if missing_group:
+        errors.append(f"{len(missing_group)} 个纳入样本尚未设置 Group：{_short_names(missing_group)}")
+    if missing_sample:
+        errors.append(f"{len(missing_sample)} 个纳入样本缺少 Sample ID：{_short_names(missing_sample)}")
+    if invalid_electrode:
+        errors.append(f"{len(invalid_electrode)} 个纳入样本的电极类型无效：{_short_names(invalid_electrode)}")
+
+    duplicate_pairs: dict[tuple[str, str], list[MetadataDraftRow]] = {}
+    for row in included:
+        key = (row.group.strip(), row.sample_id.strip())
+        if all(key):
+            duplicate_pairs.setdefault(key, []).append(row)
+    duplicates = {key: items for key, items in duplicate_pairs.items() if len(items) > 1}
+    if len(duplicates) == 1:
+        group, sample_id = next(iter(duplicates))
+        errors.append(f"Group {group} 中 Sample ID {sample_id} 重复")
+    elif duplicates:
+        preview = ", ".join(f"{group}/{sample}" for group, sample in tuple(duplicates)[:4])
+        errors.append(f"发现 {len(duplicates)} 组重复的 Group + Sample ID 组合：{preview}")
+
+    relative: dict[str, list[MetadataDraftRow]] = {}
+    for row in included:
+        relative.setdefault(row.relative_path, []).append(row)
+    collisions = {key: items for key, items in relative.items() if len(items) > 1}
+    if collisions:
+        preview = ", ".join(tuple(collisions)[:3])
+        errors.append(
+            f"不同源文件的 relative_path 发生 {len(collisions)} 处碰撞：{preview}；"
+            "请保留可区分的目录 provenance（跨文件夹导入本身受支持）"
+        )
+    return tuple(errors)
+
+
+def workflow_status_lines(workflow: LSVWorkflowState) -> tuple[str, ...]:
+    manifest = "已确认" if workflow.has_confirmed_manifest else "未确认"
+    analysis = (
+        "正在分析" if workflow.analysis_running
+        else "已过期" if workflow.analysis_result is not None and workflow.result_stale
+        else "已完成" if workflow.analysis_result is not None
+        else "未运行"
+    )
+    return (
+        f"① 样本信息：{manifest}",
+        f"② 分析设置：{workflow.target_potential_V:.6g} V；{workflow.analysis_metric}",
+        f"③ 组间比较：{len(workflow.comparisons)} 个",
+        f"④ 正式分析：{analysis}",
+    )
+
+
+def result_summary_text(result: LSVAnalysisResult) -> str:
+    material_count = sum(item.manifest.electrode_type == "Material" for item in result.files)
+    comparison_count = len({item.comparison for item in result.comparisons})
+    return (
+        "✓ 分析完成\n"
+        f"分析电位：{result.settings.target_potential_V:.6g} V｜正式指标：{result.settings.analysis_metric}｜"
+        f"Material 样本数：{material_count}｜Groups：{', '.join(result.groups)}｜"
+        f"Comparisons：{comparison_count}"
+    )
+
+
+def mad_result_status(result: LSVAnalysisResult) -> str:
+    if not result.outlier_flags:
+        return "✓ 未发现 MAD Possible outlier；所有 Material 样本仍纳入正式分析。"
+    return (
+        f"⚠ 发现 {len(result.outlier_flags)} 个 MAD Possible outlier；"
+        "仅作标记，所有 Material 样本仍纳入正式分析。"
+    )
+
+
+def sign_qc_result_status(result: LSVAnalysisResult) -> str:
+    mixed = tuple(item for item in result.current_sign_qc if item.group != "ALL" and not item.sign_consistent)
+    if not mixed:
+        return "✓ 各 Material Group 的指定电位电流方向一致。"
+    groups = ", ".join(item.group for item in mixed)
+    return (
+        f"⚠ Group {groups} 指定电位电流存在正负混合；"
+        "使用 magnitude 可能掩盖电流方向反转，请检查 signed 结果。"
+    )
 
 
 def validate_lsv_workflow(
@@ -486,17 +671,24 @@ def outlier_display_rows(result: LSVAnalysisResult) -> tuple[dict[str, object], 
 
 __all__ = [
     "ComparisonDraft",
+    "ComparisonEditorDraft",
     "GUIWorkflowValidationError",
     "LSVAnalysisRequest",
     "LSVAnalysisCompleted",
     "LSVWorkflowState",
     "MetadataDraftRow",
     "StaleAnalysisResultError",
+    "WorkflowFeedback",
     "comparison_display_rows",
     "descriptive_display_rows",
     "execute_lsv_analysis",
     "format_number",
+    "mad_result_status",
     "outlier_display_rows",
+    "result_summary_text",
     "sign_qc_display_rows",
+    "sign_qc_result_status",
+    "validate_metadata_draft",
     "validate_lsv_workflow",
+    "workflow_status_lines",
 ]
