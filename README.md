@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.1.3
+# chi760e-h2o2-analyzer — Stage 5.1.3.1
 
-当前开发状态：**Stage 5.1.3（交互式曲线游标与内联读数）**。
+当前开发状态：**Stage 5.1.3.1（Windows GUI responsiveness hotfix）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -233,6 +233,12 @@ LSV 和 i-t 原始曲线 preview 支持左键单击设置只读检查游标，�
 LSV 游标读数直接调用已验证的 `extract_current_at_potential()`：命中采样点时读取原始值，位于相邻点之间时线性插值，并禁止外推。i-t 游标使用最近真实采样点，同时在内部保留请求时间和实际采样时间；检查游标不会成为加样时间。所有计算均为只读，不修改 `potential_V`、`time_s` 或 `current_A`。
 
 每个 Workspace 分别保存 LSV 与 i-t 的游标位置和可见状态，切换后恢复各自读数。**Inspection cursor 与正式 analysis target potential 是两个独立概念**：点击 preview 不会改变分析设置、样本纳入、科研 Group 或 exclusion。消息日志默认弱化为紧凑摘要，可按需展开完整诊断。
+
+## Stage 5.1.3.1 Windows responsiveness hotfix
+
+Windows 验收发现，程序化 `Treeview.selection_set()` 可能派发 `<<TreeviewSelect>>`，而选择回调此前会再次执行完整 preview render 并重新设置同一 selection，形成事件递归。当前 `FileTable` 使用 selection-event guard 同时阻止同步和延迟到达的程序化选择事件，并在目标 key 已选中时跳过无意义的 `selection_set()`。`MainWindow` 另有 selected-state 幂等检查，相同 selected key 不再触发曲线列表重建、Matplotlib 重绘或参数刷新。
+
+一次真实用户选择变化只产生一次有效 preview render；导入完成后的首个成功文件仍自动选中，但后续程序化同步不会重新进入用户回调。该修复保留多曲线 preview、LSV/i-t cursor、inline readings、visibility、稳定颜色、Workspace 独立状态和折叠日志，不修改 parser、analysis/statistics、i-t calibration 或任何原始数组。
 
 ## 安装与测试
 

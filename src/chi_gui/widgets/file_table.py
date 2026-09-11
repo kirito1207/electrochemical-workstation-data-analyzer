@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
+from dataclasses import dataclass
 from tkinter import ttk
 from typing import Callable
 
@@ -10,11 +11,38 @@ from ..formatting import primary_parameter_text
 from ..state import FileRecord
 
 
+@dataclass(slots=True)
+class SelectionCallbackGate:
+    """Suppress duplicate or synthetic Treeview selection notifications.
+
+    Tk may deliver ``<<TreeviewSelect>>`` synchronously or after the method
+    performing a programmatic selection has returned. Recording the final
+    selection token handles both cases without relying on ``after()`` timing.
+    """
+
+    last_token: tuple[str, ...] = ()
+    suppression_depth: int = 0
+
+    def begin_programmatic_update(self) -> None:
+        self.suppression_depth += 1
+
+    def end_programmatic_update(self, token: tuple[str, ...]) -> None:
+        self.last_token = token
+        self.suppression_depth = max(0, self.suppression_depth - 1)
+
+    def should_notify(self, token: tuple[str, ...]) -> bool:
+        if self.suppression_depth or token == self.last_token:
+            return False
+        self.last_token = token
+        return True
+
+
 class FileTable(ttk.Frame):
     def __init__(self, master: tk.Misc, *, on_select: Callable[[FileRecord | None], None]):
         super().__init__(master)
         self._records: dict[str, FileRecord] = {}
         self._on_select = on_select
+        self._selection_gate = SelectionCallbackGate()
         columns = ("status", "name", "experiment", "points", "parameters")
         self.tree = ttk.Treeview(self, columns=columns, show="headings", selectmode="extended")
         headings = {
@@ -40,35 +68,58 @@ class FileTable(ttk.Frame):
         self.tree.bind("<Control-a>", self._select_all)
 
     def set_records(self, records: tuple[FileRecord, ...]) -> None:
-        self.tree.delete(*self.tree.get_children())
-        self._records = {record.key: record for record in records}
-        for record in records:
-            points = record.data.n_points if record.data is not None else "—"
-            self.tree.insert(
-                "",
-                "end",
-                iid=record.key,
-                values=(
-                    record.status.value,
-                    record.path.name,
-                    record.experiment_type,
-                    points,
-                    primary_parameter_text(record.data),
-                ),
-            )
+        self._selection_gate.begin_programmatic_update()
+        try:
+            self.tree.delete(*self.tree.get_children())
+            self._records = {record.key: record for record in records}
+            for record in records:
+                points = record.data.n_points if record.data is not None else "—"
+                self.tree.insert(
+                    "",
+                    "end",
+                    iid=record.key,
+                    values=(
+                        record.status.value,
+                        record.path.name,
+                        record.experiment_type,
+                        points,
+                        primary_parameter_text(record.data),
+                    ),
+                )
+        finally:
+            self._selection_gate.end_programmatic_update(tuple(self.tree.selection()))
 
     def selected_records(self) -> tuple[FileRecord, ...]:
         return tuple(self._records[item] for item in self.tree.selection() if item in self._records)
 
-    def select_record(self, key: str | None) -> None:
-        if key is None or key not in self._records:
-            self.tree.selection_remove(self.tree.selection())
-            return
-        self.tree.selection_set(key)
-        self.tree.focus(key)
-        self.tree.see(key)
+    def select_record(self, key: str | None) -> bool:
+        """Synchronize selection without notifying the user-action callback.
+
+        Returns ``True`` only when the Treeview selection actually changed.
+        """
+
+        desired = (key,) if key is not None and key in self._records else ()
+        current = tuple(self.tree.selection())
+        if current == desired:
+            self._selection_gate.last_token = desired
+            return False
+
+        self._selection_gate.begin_programmatic_update()
+        try:
+            if desired:
+                self.tree.selection_set(desired[0])
+                self.tree.focus(desired[0])
+                self.tree.see(desired[0])
+            else:
+                self.tree.selection_remove(current)
+        finally:
+            self._selection_gate.end_programmatic_update(tuple(self.tree.selection()))
+        return True
 
     def _selection_changed(self, _event: tk.Event) -> None:
+        token = tuple(self.tree.selection())
+        if not self._selection_gate.should_notify(token):
+            return
         selected = self.selected_records()
         self._on_select(selected[0] if len(selected) == 1 else None)
 

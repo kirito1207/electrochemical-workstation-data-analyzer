@@ -428,11 +428,18 @@ class MainWindow:
             self._update_status()
 
     def _record_selected(self, record: FileRecord | None) -> None:
+        selected_key = record.key if record is not None else None
+        current_key = self.selected_by_route.get(self.current_route)
+        current_record_key = self.current_record.key if self.current_record is not None else None
+        if selected_key == current_key and selected_key == current_record_key:
+            return
+
         self.current_record = record
-        self._render_parameters(record)
-        self.selected_by_route[self.current_route] = record.key if record is not None else None
+        self.selected_by_route[self.current_route] = selected_key
         if self.current_route in {"LSV", "i-t"}:
             self._render_technique_preview(self.current_route)
+        else:
+            self._render_parameters(record)
 
     def _visibility_changed(self, record_key: str, visible: bool) -> None:
         self.preview_display.set_visible(record_key, visible)
