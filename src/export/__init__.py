@@ -7,10 +7,12 @@ from .logging import export_analysis_settings
 from .it_csv import export_it_csv_bundle
 from .it_excel import export_it_workbook
 from .it_logging import export_it_analysis_log
+from .it_events import export_it_event_csv_bundle
 
 __all__ = [
     "export_analysis_settings",
     "export_it_analysis_log",
+    "export_it_event_csv_bundle",
     "export_it_csv_bundle",
     "export_it_workbook",
     "export_analysis_workbook",

@@ -1,4 +1,4 @@
-"""Deterministic i-t interval segmentation and plateau extraction."""
+"""Legacy Stage 4 step plateau compatibility; Generic i-t uses ``it_events``."""
 
 from __future__ import annotations
 

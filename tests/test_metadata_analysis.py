@@ -4,11 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from analysis import MetadataResolutionError, infer_experiment_manifest
+from analysis import MetadataResolutionError
+from presets.pb42 import infer_current_pb42_manifest
 
 
 def test_manifest_confirms_three_groups_and_electrode_counts(synthetic_study_root):
-    manifest = infer_experiment_manifest(
+    manifest = infer_current_pb42_manifest(
         sorted(synthetic_study_root.rglob("*.bin")), root=synthetic_study_root
     )
 
@@ -21,7 +22,7 @@ def test_manifest_confirms_three_groups_and_electrode_counts(synthetic_study_roo
 
 
 def test_bare_inherits_only_a_uniquely_confirmed_parent_group(synthetic_study_root):
-    manifest = infer_experiment_manifest(
+    manifest = infer_current_pb42_manifest(
         sorted(synthetic_study_root.rglob("*.bin")), root=synthetic_study_root
     )
     bare = [item for item in manifest.entries if item.electrode_type == "Bare"]
@@ -32,7 +33,7 @@ def test_bare_inherits_only_a_uniquely_confirmed_parent_group(synthetic_study_ro
 def test_unresolved_metadata_blocks_analysis(tmp_path):
     path = tmp_path / "unknown.bin"
     path.write_bytes(b"")
-    manifest = infer_experiment_manifest([path], root=tmp_path)
+    manifest = infer_current_pb42_manifest([path], root=tmp_path)
 
     assert not manifest.is_valid
     with pytest.raises(MetadataResolutionError, match="Metadata unresolved"):

@@ -321,35 +321,6 @@ def _one_comparison(
     )
 
 
-def compare_groups(
-    grouped_values: Mapping[str, Sequence[float]],
-    *,
-    bootstrap_seed: int = 20260910,
-    bootstrap_resamples: int = 5000,
-) -> tuple[ComparisonResult, ...]:
-    """Run fixed A-B/B-C primary and A-C exploratory comparisons."""
-
-    definitions = (
-        ComparisonDefinition(
-            "A", "B", "primary: detection medium (water vs PBS), PB 10 cycles",
-            "pb42_primary",
-        ),
-        ComparisonDefinition(
-            "B", "C", "primary: PB deposition cycles (10 vs 20), PBS",
-            "pb42_primary",
-        ),
-        ComparisonDefinition(
-            "A", "C", "exploratory: medium and PB cycles both differ",
-        ),
-    )
-    return compare_defined_groups(
-        grouped_values,
-        definitions,
-        bootstrap_seed=bootstrap_seed,
-        bootstrap_resamples=bootstrap_resamples,
-    )
-
-
 def compare_defined_groups(
     grouped_values: Mapping[str, Sequence[float]],
     definitions: Sequence[ComparisonDefinition],
@@ -416,7 +387,6 @@ __all__ = [
     "OmnibusTestResult",
     "compute_omnibus_tests",
     "compare_defined_groups",
-    "compare_groups",
     "hedges_g",
     "holm_adjust",
     "kruskal_wallis",

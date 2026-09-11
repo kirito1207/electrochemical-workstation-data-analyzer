@@ -1,4 +1,4 @@
-"""User-confirmed concentration and addition-time protocols for i-t analysis."""
+"""Legacy Stage 4 concentration protocol compatibility; use ``it_events`` for Generic i-t."""
 
 from __future__ import annotations
 

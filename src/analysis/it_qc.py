@@ -1,4 +1,4 @@
-"""Non-destructive i-t response QC and unconfirmed addition-time suggestions."""
+"""Legacy Stage 4 concentration QC compatibility; not used by Generic Event analysis."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""i-t ΔI calculation, OLS calibration, and replicate summaries."""
+"""Legacy Stage 4 concentration calibration compatibility; Generic calibration is optional."""
 
 from __future__ import annotations
 

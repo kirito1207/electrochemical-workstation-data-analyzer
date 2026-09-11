@@ -7,19 +7,21 @@ import numpy as np
 import pytest
 
 from analysis import (
-    CURRENT_PB_42_TEMPLATE,
     AnalysisSettings,
     ComparisonDefinition,
     ExperimentManifest,
     ManifestEntry,
     MetadataResolutionError,
-    analyze_lsv_files,
     analyze_lsv_with_manifest,
     compare_defined_groups,
     confirmed_generic_manifest,
-    infer_current_pb42_manifest,
     run_lsv_analysis_with_manifest,
     suggest_generic_manifest,
+)
+from presets.pb42 import (
+    CURRENT_PB_42_TEMPLATE,
+    analyze_lsv_files,
+    infer_current_pb42_manifest,
     validate_current_pb42_design,
 )
 

@@ -4,7 +4,7 @@
 
 Electrochemical Workstation Data Analyzer is a desktop-oriented electrochemical data analysis project. Its repository-level identity is generic, while its currently validated native binary parser is deliberately narrower: real-file validation primarily covers CH Instruments CHI760E Linear Sweep Voltammetry (LSV) and Amperometric i-t Curve data. The project must not claim support for every workstation vendor or describe the parser as universal.
 
-The current development state is **Stage 5.2.3**, including the Stage 5.2 Generic LSV formal-analysis GUI, Stage 5.2.1 usability/workspace hardening, the Stage 5.2.1.1 selected-potential scatter hover hit-test hotfix, Stage 5.2.2 multi-group/layout hardening, and Stage 5.2.3 overall multi-group condition-effect statistics. Development history remains cumulative.
+The current development state is **Stage 5.3**, adding a Generic i-t Event analysis architecture and removing obsolete PB42 entry points while preserving all prior LSV stages and historical scientific regressions.
 
 ## Architecture
 
@@ -50,16 +50,18 @@ The GUI currently provides multiple independent Workspaces, file/folder import, 
 
 The data page owns an independent horizontal pane layout with bounded left/right minimum widths and a remembered sash fraction. Other workflow pages cannot feed their requested Treeview or canvas width back into the data-page split. Long curve filenames use bounded display labels while their full path remains available in details/provenance.
 
-The i-t backend is implemented: user-confirmed step protocols, plateau extraction, response calculation, calibration, QC, plotting, and export exist. The formal i-t GUI has not yet been implemented. CV and CA are future technique-specific extensions and must not be routed through LSV assumptions.
+Generic i-t analysis is event-driven. A user-confirmed `EventTimeline` contains arbitrary Event names plus optional value/unit metadata. Events and analysis windows are separate: baseline/reference and response windows produce mean, sample SD, signed delta current, and magnitude from multiple time samples. Tail-fraction 20% remains the default policy; explicit windows are supported. A shared Timeline may be applied to 1/N records of different duration, with unavailable late-event responses retained per record. Calibration is off by default and runs only for an explicit selection of numeric, unit-consistent Events. Raw time-series inspection is a primary capability, not a calibration accessory.
+
+Formal i-t Event times must be user-confirmed. Cursor readings may seed a future editable Event draft but never enter formal statistics automatically. No smoothing, baseline correction, event detection, unit conversion, response-time/t90/peak/recovery/AUC calculation, or single-point formal response is performed. The roadmap may consider those time-series features separately.
 
 ## Known follow-up work
 
-Stage 5.2.2 addressed the abnormal “数据与曲线” width after analysis and the 1/2/3/N Group GUI workflow. Stage 5.2.3 adds overall Welch ANOVA and Kruskal–Wallis results/export without changing that layout or the pairwise editor. Windows manual regression remains required for result/data tab switching, maximize/restore, stale results, export, hover, and multi-Workspace interaction. The next implementation stage may address the formal i-t GUI only when separately scoped.
+The formal Generic i-t GUI remains future work. It should reuse Sample ID/Group metadata and the current numeric cursor, expose arbitrary Event name/time/value/unit/notes, and keep calibration optional. It must not expose a fixed Concentration/µM schema.
 
 The existing `ComparisonDefinition` remains the explicit pairwise contract between any two Groups. Omnibus results are stored separately and must not be inserted into pairwise rows. Do not add Games–Howell, Tukey, Dunn, paired/repeated-measures, or mixed-effects tests without a separate scientific/statistical design discussion.
 
 ## Near-term roadmap and change discipline
 
-Future multi-group work may separately consider scientifically selected post-hoc procedures and structured experimental designs. The formal i-t GUI also requires a separate stage. Later CV/CA support requires dedicated parsers and technique-specific scientific semantics. Machine learning, broad vendor claims, large package renames, and new statistical families remain outside scope unless explicitly designed.
+PB42 remains only in `presets.pb42` and historical fixtures/tests. The obsolete `infer_experiment_manifest` alias, package-level lazy PB42 exports, and fixed A/B/C Generic comparison helper were removed in Stage 5.3. Generic runtime does not import PB42. Later CV/CA support requires dedicated parsers and technique-specific scientific semantics. Machine learning, broad vendor claims, and large package renames remain outside scope.
 
 Any future change must preserve raw-data immutability, provenance, user-confirmed metadata, explicit target/comparison definitions, non-destructive QC, signed values, and separation of parser, analysis, plotting, export, GUI, and optional presets.

@@ -1,4 +1,4 @@
-"""End-to-end, user-protocol-driven i-t analysis orchestration."""
+"""Legacy Stage 4 concentration orchestration retained for regression compatibility."""
 
 from __future__ import annotations
 

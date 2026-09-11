@@ -50,7 +50,8 @@ def synthetic_study_root(tmp_path_factory, lsv_path) -> Path:
 
 @pytest.fixture(scope="session")
 def synthetic_analysis_result(synthetic_study_root):
-    from analysis import AnalysisSettings, analyze_lsv_files
+    from analysis import AnalysisSettings
+    from presets.pb42 import analyze_lsv_files
 
     return analyze_lsv_files(
         sorted(synthetic_study_root.rglob("*.bin")),

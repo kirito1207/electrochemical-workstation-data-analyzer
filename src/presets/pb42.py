@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -201,21 +200,6 @@ def validate_current_pb42_design(manifest: ExperimentManifest) -> None:
         raise MetadataResolutionError(tuple(errors))
 
 
-def infer_experiment_manifest(
-    paths: Iterable[str | Path], *, root: str | Path
-) -> ExperimentManifest:
-    """Legacy PB42-only alias; Generic Mode must use confirmed manifests."""
-
-    warnings.warn(
-        "infer_experiment_manifest() is a legacy PB42-specific alias; "
-        "Generic Mode must use suggest_generic_manifest() followed by "
-        "confirmed_generic_manifest().",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return infer_current_pb42_manifest(paths, root=root)
-
-
 def analyze_lsv_files(
     paths: Sequence[str | Path],
     *,
@@ -259,7 +243,6 @@ __all__ = [
     "PB42ExperimentTemplate",
     "analyze_lsv_files",
     "infer_current_pb42_manifest",
-    "infer_experiment_manifest",
     "run_lsv_analysis",
     "validate_current_pb42_design",
 ]

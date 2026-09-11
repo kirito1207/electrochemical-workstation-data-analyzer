@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from analysis import compare_groups, describe_values, flag_mad_outliers, holm_adjust
+from analysis import ComparisonDefinition, compare_defined_groups, describe_values, flag_mad_outliers, holm_adjust
 from analysis.lsv_analysis import validate_common_potential_grid
 from chi_parser import parse_lsv
 from analysis import PotentialGridMismatchError
@@ -37,7 +37,12 @@ def test_welch_mann_whitney_holm_and_comparison_roles():
         "B": np.linspace(1.4, 2.6, 13),
         "C": np.linspace(2.0, 3.2, 13),
     }
-    results = compare_groups(values, bootstrap_seed=77, bootstrap_resamples=5000)
+    definitions = (
+        ComparisonDefinition("A", "B", "primary", "historical_primary"),
+        ComparisonDefinition("B", "C", "primary", "historical_primary"),
+        ComparisonDefinition("A", "C", "exploratory"),
+    )
+    results = compare_defined_groups(values, definitions, bootstrap_seed=77, bootstrap_resamples=5000)
 
     assert len(results) == 6
     assert {item.test for item in results} == {
@@ -61,8 +66,13 @@ def test_hedges_g_bootstrap_is_reproducible():
         "B": np.linspace(1.4, 2.6, 13),
         "C": np.linspace(2.0, 3.2, 13),
     }
-    first = compare_groups(values, bootstrap_seed=991, bootstrap_resamples=5000)
-    second = compare_groups(values, bootstrap_seed=991, bootstrap_resamples=5000)
+    definitions = (
+        ComparisonDefinition("A", "B", "primary", "historical_primary"),
+        ComparisonDefinition("B", "C", "primary", "historical_primary"),
+        ComparisonDefinition("A", "C", "exploratory"),
+    )
+    first = compare_defined_groups(values, definitions, bootstrap_seed=991, bootstrap_resamples=5000)
+    second = compare_defined_groups(values, definitions, bootstrap_seed=991, bootstrap_resamples=5000)
 
     assert first == second
     assert np.isfinite(first[0].hedges_g)

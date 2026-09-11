@@ -1,12 +1,9 @@
 """Technique-aware analysis APIs without experiment-preset dependencies.
 
-PB42 names remain available through lazy compatibility lookup, but they are
-not imported by Generic LSV or i-t analysis. New PB42 callers should import
-from :mod:`presets.pb42` explicitly.
+PB42 callers must import :mod:`presets.pb42` explicitly. Generic i-t callers
+use the Event APIs; Stage 4 concentration APIs remain exported only for
+backward-compatible historical workflows.
 """
-
-from importlib import import_module
-from typing import Any
 
 from .descriptive import DescriptiveStatistics, describe_values
 from .lsv_analysis import (
@@ -41,7 +38,6 @@ from .statistics import (
     ComparisonResult,
     OmnibusTestResult,
     compare_defined_groups,
-    compare_groups,
     compute_omnibus_tests,
     holm_adjust,
     kruskal_wallis,
@@ -89,6 +85,14 @@ from .it_qc import (
     flag_delta_outliers,
     suggest_addition_times,
 )
+from .it_events import (
+    CalibrationSelection, Event, EventAnalysisError, EventCalibrationResult,
+    EventResponse, EventResponseSummary, EventTimeline, ITEventBatchResult, ITEventFileResult,
+    ITEventInput, PlateauPolicy, ResponseWindow, WindowStatistics,
+    analyze_it_event_batch, analyze_it_events, calculate_event_responses,
+    define_response_windows, extract_window_statistics, fit_event_calibration,
+    summarize_event_responses,
+)
 
 __all__ = [
     "AnalysisSettings",
@@ -130,7 +134,6 @@ __all__ = [
     "analyze_it_file",
     "analyze_lsv_with_manifest",
     "compare_defined_groups",
-    "compare_groups",
     "compute_omnibus_tests",
     "calculate_delta_i",
     "describe_values",
@@ -158,22 +161,11 @@ __all__ = [
     "route_for_experiment_type",
 ]
 
-
-_LEGACY_PB42_EXPORTS = {
-    "CURRENT_PB_42_TEMPLATE",
-    "GroupDesign",
-    "PB42ExperimentTemplate",
-    "analyze_lsv_files",
-    "infer_current_pb42_manifest",
-    "infer_experiment_manifest",
-    "run_lsv_analysis",
-    "validate_current_pb42_design",
-}
-
-
-def __getattr__(name: str) -> Any:
-    """Resolve legacy PB42 package-level names without an eager dependency."""
-
-    if name in _LEGACY_PB42_EXPORTS:
-        return getattr(import_module("presets.pb42"), name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+__all__ += [
+    "CalibrationSelection", "Event", "EventAnalysisError", "EventCalibrationResult",
+    "EventResponse", "EventResponseSummary", "EventTimeline", "ITEventBatchResult", "ITEventFileResult",
+    "ITEventInput", "PlateauPolicy", "ResponseWindow", "WindowStatistics",
+    "analyze_it_event_batch", "analyze_it_events", "calculate_event_responses",
+    "define_response_windows", "extract_window_statistics", "fit_event_calibration",
+    "summarize_event_responses",
+]

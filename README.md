@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.2.3
+# Electrochemical Workstation Data Analyzer — Stage 5.3
 
-当前开发状态：**Stage 5.2.3（Multi-group overall condition-effect statistics）**。
+当前开发状态：**Stage 5.3（Generic i-t Event Analysis Architecture + Legacy PB42 Cleanup）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -190,7 +190,7 @@ GUI 预留流程为：选择文件 → parser → metadata 建议表 → 用户�
 
 Generic LSV core 不导入 `presets.pb42`，也不依赖 PB42 的组名、样本数、文件名或 comparison 定义。新代码应显式从 `presets.pb42` 导入 PB42 功能；未来删除该 preset 不需要修改 `analyze_lsv_with_manifest()` 或 `run_lsv_analysis_with_manifest()`。
 
-`infer_experiment_manifest()` 仅作为 backward-compatible、PB42-specific legacy alias 保留，并会产生 deprecation warning。README 不把它作为 Generic Mode 入口，未来 Generic GUI 也不得调用它；推荐流程始终是 `suggest_generic_manifest()` → 用户核对和编辑 → `confirmed_generic_manifest()`。
+历史 PB42 inference 仅保留显式的 `presets.pb42.infer_current_pb42_manifest()`；原 `infer_experiment_manifest()` alias 与 `analysis` 包级 PB42 lazy exports 已删除。Generic Mode 入口始终是 `suggest_generic_manifest()` → 用户核对和编辑 → `confirmed_generic_manifest()`。
 
 `route_for_experiment_type()` 为未来 GUI 提供小型 technique routing contract：当前只路由 LSV 和 i-t。CV 与 CA 尚未实现，不能被强行送入 LSV 分析。未来 CV/CA 可以复用 generic metadata、通用统计、export 和 plotting utilities，但必须有 technique-specific parser 与 analysis logic。尤其 CV 中同一 potential 可在不同 cycle、segment 和 sweep direction 重复出现，因此未来 current-at-potential API 必须显式区分这些维度，不能复用 LSV 的单调电位轴假设。
 
@@ -301,6 +301,16 @@ Stage 5.2.2 没有新增 ANOVA、Welch ANOVA、Kruskal–Wallis、Tukey、Games�
 统计结果页新增独立的“整体多组比较”区域，展示 statistic、Welch numerator/denominator df、Kruskal–Wallis df、p-value、状态与说明。1 组或 2 组时会明确显示不适用。整体检验始终使用全部 Material Groups，不提供选择性 group subset；Bare 继续排除。结果导出新增 `omnibus_statistics.csv`、Excel `Omnibus statistics` sheet，并在 provenance JSON 中记录方法和完整结果。
 
 此设计是 additive：原有“分析设置 → 用户定义比较”中的 Left Group、Right Group、Role、Holm Family 和 Name 编辑流程保持不变。用户定义的 pairwise comparisons 始终照常执行，既不会由 omnibus p-value 控制，也不会自动生成所有两两组合；原有 Welch independent-samples t-test、Mann–Whitney、mean difference、bootstrap CI、Hedges' g 和 Holm correction 公式与语义均未修改。Stage 5.2.3 未新增 classical ANOVA、Tukey、Games–Howell、Dunn、paired/repeated-measures 或 mixed-effects models，也未修改 selected plots、parser 或 i-t backend。Windows 人工验收清单见 `docs/windows_stage523_checklist.md`。
+
+## Stage 5.3 Generic i-t Event analysis architecture
+
+i-t 的新 Generic core 使用用户确认的 `EventTimeline`。`Event` 只记录稳定 `event_id`、时间、任意名称、可选数值/单位和 notes；它不等同于 plateau window，也不绑定 addition、dose 或 concentration。默认 baseline 是记录开始至首个 Event 前的 reference segment，后续每个 Event 到下一 Event（最后一个到记录末端）形成独立 response segment。正式均值、SD 与响应始终来自时间窗口；默认 `PlateauPolicy(mode="tail_fraction", fraction=0.20)` 保留末段 20% 规则，也支持用户明确给出的 windows。少于两个真实点或短记录缺少后期 Event 时返回 per-record unavailable，不扩大窗口、不删除整批分析。
+
+`EventResponse` 同时保存 baseline/response mean、SD、n、signed `delta_current_uA = response - baseline` 与 `abs(delta)`。一个共享 Timeline 可用于 1/2/N 个不同长度记录，Sample ID 和 Group 完全由用户定义。Calibration 默认关闭；只有显式 `CalibrationSelection(event_ids, x_label, x_unit)` 才拟合 OLS，并只使用被选且具有 numeric value、完全一致 unit 的 Events，不自动选择 numeric Event、不自动换算单位。Generic CSV 使用 `events.csv`、`response_windows.csv`、`event_responses.csv`、`event_summary.csv`，启用时才生成 `calibration.csv`。
+
+本阶段建立 backend/API、通用 export 与 event-marker figure，不实现正式 i-t GUI。现有 numeric cursor 仍只用于 inspection；后续 GUI 可将当前 cursor time 作为“添加事件”草稿，但必须由用户确认后才能进入 Timeline。自动 event detection、smoothing、baseline correction、固定 Concentration/µM UI、CV/CA、ML 和 packaging 均未实现。
+
+旧 Stage 4 concentration backend 暂作为隔离的历史 compatibility implementation 保留，以保护既有科研回归；新 Generic Event path 不导入它。PB42 的严格 42-file preset 与 snapshot test同样保留为历史科研回归，但 Generic runtime 不再包含固定 A/B/C comparison helper、42-file alias 或 PB42 lazy import。
 
 ## 安装与测试
 

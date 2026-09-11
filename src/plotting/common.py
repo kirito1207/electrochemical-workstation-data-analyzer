@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import re
 
 
-GROUP_COLORS = {"A": "#0072B2", "B": "#D55E00", "C": "#009E73"}
 GENERIC_PALETTE = (
     "#0072B2", "#D55E00", "#009E73", "#CC79A7",
     "#E69F00", "#56B4E9", "#F0E442", "#332288",
@@ -17,10 +16,10 @@ GENERIC_PALETTE = (
 
 
 def colors_for_groups(groups: tuple[str, ...]) -> dict[str, str]:
-    """Keep PB42 colors stable and assign deterministic colors to other groups."""
+    """Assign deterministic colors solely from user-confirmed group order."""
 
     return {
-        group: GROUP_COLORS.get(group, GENERIC_PALETTE[index % len(GENERIC_PALETTE)])
+        group: GENERIC_PALETTE[index % len(GENERIC_PALETTE)]
         for index, group in enumerate(groups)
     }
 
