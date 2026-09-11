@@ -132,6 +132,9 @@ class EventResponseSummary:
     sem_delta_current_uA: float
     mean_response_magnitude_uA: float
     sd_response_magnitude_uA: float
+    sem_response_magnitude_uA: float = math.nan
+    cv_delta_percent: float = math.nan
+    cv_magnitude_percent: float = math.nan
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +288,11 @@ def summarize_event_responses(responses):
             group, event_id, selected[0].event_name, len(selected), float(np.mean(signed)),
             sd_signed, sd_signed / math.sqrt(len(signed)) if len(signed) > 1 else math.nan,
             float(np.mean(magnitude)), sd_magnitude,
+            sd_magnitude / math.sqrt(len(magnitude)) if len(magnitude) > 1 else math.nan,
+            (sd_signed / abs(float(np.mean(signed))) * 100.0
+             if len(signed) > 1 and float(np.mean(signed)) != 0 else math.nan),
+            (sd_magnitude / float(np.mean(magnitude)) * 100.0
+             if len(magnitude) > 1 and float(np.mean(magnitude)) != 0 else math.nan),
         ))
     return tuple(output)
 

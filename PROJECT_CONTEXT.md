@@ -4,7 +4,7 @@
 
 Electrochemical Workstation Data Analyzer is a desktop-oriented electrochemical data analysis project. Its repository-level identity is generic, while its currently validated native binary parser is deliberately narrower: real-file validation primarily covers CH Instruments CHI760E Linear Sweep Voltammetry (LSV) and Amperometric i-t Curve data. The project must not claim support for every workstation vendor or describe the parser as universal.
 
-The current development state is **Stage 5.3**, adding a Generic i-t Event analysis architecture and removing obsolete PB42 entry points while preserving all prior LSV stages and historical scientific regressions.
+The current development state is **Stage 5.3.1**, connecting the Generic i-t Event backend to the desktop GUI while preserving all prior LSV stages and historical scientific regressions.
 
 ## Architecture
 
@@ -52,11 +52,11 @@ The data page owns an independent horizontal pane layout with bounded left/right
 
 Generic i-t analysis is event-driven. A user-confirmed `EventTimeline` contains arbitrary Event names plus optional value/unit metadata. Events and analysis windows are separate: baseline/reference and response windows produce mean, sample SD, signed delta current, and magnitude from multiple time samples. Tail-fraction 20% remains the default policy; explicit windows are supported. A shared Timeline may be applied to 1/N records of different duration, with unavailable late-event responses retained per record. Calibration is off by default and runs only for an explicit selection of numeric, unit-consistent Events. Raw time-series inspection is a primary capability, not a calibration accessory.
 
-Formal i-t Event times must be user-confirmed. Cursor readings may seed a future editable Event draft but never enter formal statistics automatically. No smoothing, baseline correction, event detection, unit conversion, response-time/t90/peak/recovery/AUC calculation, or single-point formal response is performed. The roadmap may consider those time-series features separately.
+Formal i-t Event times must be user-confirmed. Cursor readings may seed an editable Event draft only through an explicit GUI action; moving the cursor never changes the formal Timeline, invalidates a result, or enters formal statistics automatically. No smoothing, baseline correction, event detection, unit conversion, response-time/t90/peak/recovery/AUC calculation, or single-point formal response is performed. The roadmap may consider those time-series features separately.
 
 ## Known follow-up work
 
-The formal Generic i-t GUI remains future work. It should reuse Sample ID/Group metadata and the current numeric cursor, expose arbitrary Event name/time/value/unit/notes, and keep calibration optional. It must not expose a fixed Concentration/µM schema.
+The formal Generic i-t GUI now provides Sample ID/Group/Notes metadata, a user-confirmed arbitrary Event name/time/value/unit/notes Timeline, cursor-assisted draft creation, window-response settings, result tables/plots, and export. Calibration is optional and off by default; numeric Events are never selected automatically. The GUI intentionally exposes only the default tail-fraction policy in Stage 5.3.1, while the backend retains explicit-window support. It does not expose a fixed Concentration/µM schema.
 
 The existing `ComparisonDefinition` remains the explicit pairwise contract between any two Groups. Omnibus results are stored separately and must not be inserted into pairwise rows. Do not add Games–Howell, Tukey, Dunn, paired/repeated-measures, or mixed-effects tests without a separate scientific/statistical design discussion.
 

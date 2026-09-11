@@ -1,4 +1,4 @@
-"""Responsive Chinese ttk main window with Stage 5.2.2 layout hardening."""
+"""Responsive Chinese ttk main window for LSV and Generic i-t workflows."""
 
 from __future__ import annotations
 
@@ -24,6 +24,8 @@ from .layout import (
     PARAMETER_VALUE_WRAP_PX,
 )
 from .lsv_export import export_lsv_result, open_output_directory
+from .it_export import export_it_result
+from .it_workflow import (ITAnalysisCompleted, execute_it_analysis)
 from .lsv_workflow import (
     GUIWorkflowValidationError,
     LSVAnalysisCompleted,
@@ -32,8 +34,9 @@ from .lsv_workflow import (
 )
 from .pages import IT_STAGE_MESSAGE, LSV_STAGE_MESSAGE, WELCOME_MESSAGE, unsupported_message
 from .state import AppState, FileRecord, PreviewDisplayState
-from .widgets import (CurveList, FileTable, LogPanel, LSVResultPlotPanel,
-                      LSVResultsPanel, LSVSettingsPanel, PlotPreview, WorkspaceTabs)
+from .widgets import (CurveList, FileTable, ITResultPlotPanel, ITResultsPanel,
+                      ITSettingsPanel, LogPanel, LSVResultPlotPanel, LSVResultsPanel,
+                      LSVSettingsPanel, PlotPreview, WorkspaceTabs)
 from .workspaces import WorkspaceManager, WorkspaceSession
 
 
@@ -245,6 +248,18 @@ class MainWindow:
             on_open_folder=self._open_lsv_output,
         )
         self.lsv_figures.grid(row=0, column=0, sticky="nsew")
+        self.it_settings = ITSettingsPanel(
+            self.settings_tab, on_change=self._it_setting_changed,
+            on_confirm_metadata=self._confirm_it_metadata,
+            on_confirm_timeline=self._confirm_it_timeline,
+            on_add_cursor_event=self._add_it_event_from_cursor,
+            on_run=self._run_it_analysis,
+        )
+        self.it_results = ITResultsPanel(self.results_tab)
+        self.it_figures = ITResultPlotPanel(
+            self.figures_tab, on_export=self._export_it_analysis,
+            on_open_folder=self._open_it_output,
+        )
 
         self.status_text = tk.StringVar(value="就绪")
         ttk.Label(self.root, textvariable=self.status_text, relief="sunken", anchor="w", padding=(8, 4)).pack(
@@ -341,8 +356,8 @@ class MainWindow:
             )
         self.file_table.set_records(records)
         for tab in (1, 2, 3):
-            self.workflow_tabs.tab(tab, state="normal" if route == "LSV" else "disabled")
-        if route != "LSV":
+            self.workflow_tabs.tab(tab, state="normal" if route in {"LSV", "i-t"} else "disabled")
+        if route not in {"LSV", "i-t"}:
             self.workflow_tabs.select(0)
         if route in {"LSV", "i-t"}:
             self._render_technique_preview(route)
@@ -357,7 +372,23 @@ class MainWindow:
                 "请选择 LSV 或 i-t 页面查看曲线" if route == "all" else unsupported_message(route)
             )
         self._update_status()
-        self._refresh_lsv_workflow()
+        self._show_workflow_panels(route)
+        self._refresh_active_workflow()
+
+    def _show_workflow_panels(self, route: str) -> None:
+        lsv = (self.lsv_settings, self.lsv_results, self.lsv_figures)
+        it = (self.it_settings, self.it_results, self.it_figures)
+        for widget in (*lsv, *it):
+            widget.grid_remove()
+        selected = lsv if route == "LSV" else it if route == "i-t" else ()
+        for widget in selected:
+            widget.grid(row=0, column=0, sticky="nsew")
+
+    def _refresh_active_workflow(self) -> None:
+        if self.current_route == "i-t":
+            self._refresh_it_workflow()
+        else:
+            self._refresh_lsv_workflow()
 
     def _refresh_lsv_workflow(self) -> None:
         workflow = self.workspace.lsv_workflow
@@ -370,12 +401,22 @@ class MainWindow:
         if self.current_route == "LSV" and self.workflow_tabs.select() == str(self.figures_tab):
             self.lsv_figures.render(workflow)
 
+    def _refresh_it_workflow(self) -> None:
+        workflow = self.workspace.it_workflow
+        self.it_settings.render(workflow, busy=self.runner.busy,
+                                workspace_token=self.workspace.workspace_id)
+        self.it_results.render(workflow)
+        if self.current_route == "i-t" and self.workflow_tabs.select() == str(self.figures_tab):
+            self.it_figures.render(workflow)
+
     def _workflow_tab_changed(self, _event=None) -> None:
         selected = self.workflow_tabs.select()
         if selected == str(self.data_tab):
             self._schedule_data_layout(force=True)
         if self.current_route == "LSV" and selected == str(self.figures_tab):
             self.lsv_figures.render(self.workspace.lsv_workflow)
+        if self.current_route == "i-t" and selected == str(self.figures_tab):
+            self.it_figures.render(self.workspace.it_workflow)
 
     def _data_panes_resized(self, event=None) -> None:
         width = int(getattr(event, "width", 0) or self.data_panes.winfo_width())
@@ -608,6 +649,17 @@ class MainWindow:
                     self._refresh_lsv_workflow()
                     self.workflow_tabs.select(self.results_tab)
                 return
+            if isinstance(event.payload, ITAnalysisCompleted):
+                completed = event.payload
+                session = self.workspace_manager.get(completed.workspace_id)
+                if session is None:
+                    return
+                session.it_workflow.accept_result(completed.request, completed.result)
+                self._log("Generic i-t Event 正式分析完成；Timeline 与 Calibration 均来自用户显式设置。", session=session)
+                if session.workspace_id == self.workspace.workspace_id:
+                    self._refresh_it_workflow()
+                    self.workflow_tabs.select(self.results_tab)
+                return
             workspace_id, supplied_records = event.payload
             records = tuple(supplied_records)
             session = self.workspace_manager.get(workspace_id)
@@ -615,6 +667,7 @@ class MainWindow:
                 return
             session.state.add_records(records)
             session.lsv_workflow.sync_records(session.state.records)
+            session.it_workflow.sync_records(session.state.records)
             successful_routes = tuple(
                 dict.fromkeys(record.route for record in records if record.parse_success)
             )
@@ -641,6 +694,11 @@ class MainWindow:
                 session.lsv_workflow.set_feedback(
                     "warning", "正式分析失败", (f"{type(event.payload).__name__}：{event.payload}",)
                 )
+            if session is not None and session.it_workflow.analysis_running:
+                session.it_workflow.analysis_running = False
+                session.it_workflow.set_feedback(
+                    "warning", "i-t 正式分析失败", (f"{type(event.payload).__name__}：{event.payload}",)
+                )
             self._log(
                 f"后台任务异常：{type(event.payload).__name__}：{event.payload}",
                 session=session,
@@ -649,7 +707,7 @@ class MainWindow:
             self._running_workspace_id = None
             self._set_busy(False)
             self._update_status()
-            self._refresh_lsv_workflow()
+            self._refresh_active_workflow()
 
     def _record_selected(self, record: FileRecord | None) -> None:
         selected_key = record.key if record is not None else None
@@ -696,6 +754,7 @@ class MainWindow:
             return
         count = self.state.remove([record.path for record in selected])
         self.workspace.lsv_workflow.sync_records(self.state.records)
+        self.workspace.it_workflow.sync_records(self.state.records)
         self._log(f"已从当前工作区移除 {count} 个文件；源文件未被修改。")
         self._set_route(self.current_route)
 
@@ -792,6 +851,98 @@ class MainWindow:
                 self._log(f"无法打开结果文件夹：{type(error).__name__}：{error}")
         else:
             self._log("当前 Workspace 尚无已导出的结果目录。")
+
+    def _it_setting_changed(self, action: str, *values) -> None:
+        workflow = self.workspace.it_workflow
+        try:
+            if action == "metadata": workflow.update_metadata(*values)
+            elif action == "add_event":
+                time_s, name, value, unit, notes = values
+                workflow.add_event(time_s=time_s, name=name, value=value, unit=unit, notes=notes)
+            elif action == "edit_event":
+                event_id, time_s, name, value, unit, notes = values
+                workflow.edit_event(event_id, time_s=time_s, name=name, value=value, unit=unit, notes=notes)
+            elif action == "delete_events": workflow.delete_events(values[0])
+            elif action == "response":
+                workflow.set_tail_fraction(values[0]); workflow.set_metric(values[1])
+            elif action == "calibration": workflow.set_calibration(*values)
+        except Exception as error:
+            workflow.set_feedback("warning", "i-t 设置未更新", (str(error),))
+            self._log(f"i-t 设置未更新：{error}")
+        self._refresh_it_workflow()
+
+    def _confirm_it_metadata(self) -> None:
+        try:
+            self.workspace.it_workflow.confirm_metadata()
+        except GUIWorkflowValidationError as error:
+            self.workspace.it_workflow.set_feedback("warning", "样本信息无法确认", error.errors)
+        self._refresh_it_workflow()
+
+    def _confirm_it_timeline(self) -> None:
+        try:
+            self.workspace.it_workflow.confirm_timeline(self.state.records)
+        except GUIWorkflowValidationError as error:
+            self.workspace.it_workflow.set_feedback("warning", "Event Timeline 无法确认", error.errors)
+        self._refresh_it_workflow()
+
+    def _add_it_event_from_cursor(self) -> None:
+        cursor = self.workspace.cursor_by_route["i-t"]
+        if not cursor.visible or cursor.requested_x is None:
+            self.workspace.it_workflow.set_feedback("warning", "无法从游标添加 Event", ("当前没有有效的 i-t inspection cursor。",))
+            self._refresh_it_workflow(); return
+        collection = self.controller.build_preview_collection(
+            self.state.records, experiment_type="i-t", display_state=self.preview_display,
+            selected_key=self.selected_by_route.get("i-t"),
+        )
+        readings = build_cursor_readings(self.state.records, collection, cursor.requested_x)
+        preferred = next((row for row in readings.readings if row.record_key == collection.selected_key and row.available), None)
+        preferred = preferred or next((row for row in readings.readings if row.available), None)
+        actual_time = preferred.actual_sampled_x if preferred is not None else None
+        if actual_time is None:
+            self.workspace.it_workflow.set_feedback("warning", "无法从游标添加 Event", ("当前游标没有可用的真实采样时间。",))
+        else:
+            try:
+                event = self.workspace.it_workflow.add_event(time_s=actual_time, name=f"Event {len(self.workspace.it_workflow.events) + 1}")
+            except ValueError as error:
+                self.workspace.it_workflow.set_feedback("warning", "Event 草稿未添加", (str(error),))
+            else:
+                self.workspace.it_workflow.set_feedback("info", f"已从真实采样时间 {event.time_s:.9g} s 添加 Event 草稿；请编辑并确认 Timeline")
+        self._refresh_it_workflow()
+
+    def _run_it_analysis(self) -> None:
+        try:
+            request = self.workspace.it_workflow.build_request(self.state.records)
+        except GUIWorkflowValidationError as error:
+            self.workspace.it_workflow.set_feedback("warning", "无法开始正式 i-t 分析", error.errors)
+            self._refresh_it_workflow(); return
+        workspace_id = self.workspace.workspace_id
+        self._running_workspace_id = workspace_id; self._set_busy(True)
+        self.workspace.it_workflow.analysis_running = True
+        self.workspace.it_workflow.set_feedback("busy", "正在运行 Generic i-t Event 分析…")
+        def task(cancel_event, emit):
+            if cancel_event.is_set(): raise RuntimeError("分析已取消")
+            return ITAnalysisCompleted(workspace_id, request, execute_it_analysis(request))
+        self.runner.submit(task); self._refresh_it_workflow()
+
+    def _export_it_analysis(self) -> None:
+        try: result = self.workspace.it_workflow.require_exportable_result()
+        except StaleAnalysisResultError as error:
+            self._log(f"无法导出 i-t 结果：{error}"); return
+        selected = filedialog.askdirectory(parent=self.root, title="选择 i-t 结果保存位置")
+        if not selected: return
+        try: run = export_it_result(result, selected)
+        except Exception as error:
+            self._log(f"i-t 导出失败：{type(error).__name__}：{error}"); return
+        self.workspace.it_workflow.last_export_directory = str(run.output_directory)
+        self._log(f"已导出 {len(run.generated_files)} 个 i-t 结果文件：{run.output_directory}")
+        self._refresh_it_workflow()
+
+    def _open_it_output(self) -> None:
+        directory = self.workspace.it_workflow.last_export_directory
+        if not directory:
+            self._log("当前 Workspace 尚无已导出的 i-t 结果目录。"); return
+        try: open_output_directory(directory)
+        except Exception as error: self._log(f"无法打开结果文件夹：{type(error).__name__}：{error}")
 
     def _show_details(self) -> None:
         if self.current_record is None:

@@ -13,4 +13,4 @@
 - Confirm raw event-marker figure labels arbitrary Event names/value/unit.
 - Re-run LSV result tabs, hover, Workspace switching, and data-page layout regression.
 
-Stage 5.3 does not yet add the formal i-t Event editor GUI; these GUI-specific interactions remain acceptance criteria for that later implementation.
+Stage 5.3 established the backend. The implemented Stage 5.3.1 GUI acceptance checklist is maintained in `windows_stage531_checklist.md`.

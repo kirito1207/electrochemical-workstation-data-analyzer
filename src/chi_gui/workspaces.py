@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .cursor import InspectionCursorState
+from .it_workflow import ITWorkflowState
 from .lsv_workflow import LSVWorkflowState
 from .state import AppState, PreviewDisplayState
 
@@ -30,6 +31,7 @@ class WorkspaceSession:
     selected_by_route: dict[str, str | None] = field(default_factory=_default_selection)
     cursor_by_route: dict[str, InspectionCursorState] = field(default_factory=_default_cursors)
     lsv_workflow: LSVWorkflowState = field(default_factory=LSVWorkflowState)
+    it_workflow: ITWorkflowState = field(default_factory=ITWorkflowState)
     current_route: str = "all"
     log_messages: list[str] = field(default_factory=list)
 
@@ -41,6 +43,7 @@ class WorkspaceSession:
         self.selected_by_route = _default_selection()
         self.cursor_by_route = _default_cursors()
         self.lsv_workflow = LSVWorkflowState()
+        self.it_workflow = ITWorkflowState()
 
 
 class WorkspaceManager:

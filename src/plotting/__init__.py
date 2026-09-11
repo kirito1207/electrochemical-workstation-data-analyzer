@@ -7,7 +7,8 @@ from .selected_potential import plot_selected_potential
 from .it_annotated import plot_annotated_it
 from .it_calibration import plot_it_calibrations
 from .it_raw import plot_raw_it
-from .it_events import build_it_event_figure
+from .it_events import (build_it_calibration_figure, build_it_event_figure,
+                        build_it_response_figure)
 
 __all__ = [
     "plot_mean_lsv",
@@ -18,4 +19,6 @@ __all__ = [
     "plot_it_calibrations",
     "plot_raw_it",
     "build_it_event_figure",
+    "build_it_response_figure",
+    "build_it_calibration_figure",
 ]

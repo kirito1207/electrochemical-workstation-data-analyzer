@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.3
+# Electrochemical Workstation Data Analyzer — Stage 5.3.1
 
-当前开发状态：**Stage 5.3（Generic i-t Event Analysis Architecture + Legacy PB42 Cleanup）**。
+当前开发状态：**Stage 5.3.1（Generic i-t Event Analysis GUI）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -184,7 +184,7 @@ result = analyze_lsv_with_manifest(
 
 Generic Mode 只执行用户声明的 comparisons，不自动进行全组两两比较。Holm adjustment 仅在相同 `holm_family` 中声明的 primary Welch comparisons 之间进行。Bare 保留在逐文件数据和原始曲线中，但不进入 Material 描述统计、outlier QC 或显著性检验。已有的 signed/magnitude、插值、MAD 标记和 current sign QC 科研规则保持不变。
 
-GUI 预留流程为：选择文件 → parser → metadata 建议表 → 用户编辑 → 用户确认 manifest → 设置分析电位和 comparisons → 正式分析。i-t GUI 应自动生成 baseline row：`concentration = 0 µM`，`addition_time = ITData.actual_first_time_s`；用户只输入非零浓度的真实加样时刻。Stage 4.5 不实现 GUI。
+Stage 4.5 当时只预留 GUI 流程：选择文件 → parser → metadata 建议表 → 用户编辑 → 用户确认 manifest → 设置分析电位和 comparisons → 正式分析。该阶段未实现 GUI；其早期固定浓度式 i-t 草案后来已由 Stage 5.3/5.3.1 的通用 Event Timeline 设计取代。
 
 ## Stage 4.6 可选 preset 与 technique 扩展
 
@@ -266,7 +266,7 @@ Comparison 只由用户明确添加，并记录 Left Group、Right Group、Prima
 
 统计结果页展示当前 metric 的 group descriptive statistics、Welch/Mann–Whitney、raw/Holm p、mean difference 与 CI、Hedges' g 与 CI、sign QC、MAD 标记和 warning。设置发生变化后，现有结果立即标记为 stale，并在重新分析前禁止导出。结果图表页一次显示一张后端科研图，可切换 raw curves、mean ± SD、mean overlay、selected-potential signed/magnitude scatter 和 CV%。
 
-“导出当前完整分析结果”只导出当前内存中的非过期 result，不会重新分析。每次导出创建新的时间戳目录，包含 Excel、CSV、PNG 300 dpi、SVG、PDF 和 provenance JSON log；同一时间戳重复导出会使用新后缀，不覆盖旧目录。Stage 5.2 不提供 i-t 正式 GUI（计划在 Stage 5.3 接入）、CV/CA/ML 或 Windows exe。
+“导出当前完整分析结果”只导出当前内存中的非过期 result，不会重新分析。每次导出创建新的时间戳目录，不覆盖旧目录。LSV 输出包含 Excel、CSV、PNG 300 dpi、SVG、PDF 和 provenance JSON log；Generic i-t Event 输出包含通用 CSV 与 PNG 300 dpi/SVG/PDF 图。CV/CA/ML 与 Windows exe 仍未实现。
 
 Windows Stage 5.2 人工验收清单见 `docs/windows_stage52_checklist.md`。
 
@@ -308,9 +308,19 @@ i-t 的新 Generic core 使用用户确认的 `EventTimeline`。`Event` 只记�
 
 `EventResponse` 同时保存 baseline/response mean、SD、n、signed `delta_current_uA = response - baseline` 与 `abs(delta)`。一个共享 Timeline 可用于 1/2/N 个不同长度记录，Sample ID 和 Group 完全由用户定义。Calibration 默认关闭；只有显式 `CalibrationSelection(event_ids, x_label, x_unit)` 才拟合 OLS，并只使用被选且具有 numeric value、完全一致 unit 的 Events，不自动选择 numeric Event、不自动换算单位。Generic CSV 使用 `events.csv`、`response_windows.csv`、`event_responses.csv`、`event_summary.csv`，启用时才生成 `calibration.csv`。
 
-本阶段建立 backend/API、通用 export 与 event-marker figure，不实现正式 i-t GUI。现有 numeric cursor 仍只用于 inspection；后续 GUI 可将当前 cursor time 作为“添加事件”草稿，但必须由用户确认后才能进入 Timeline。自动 event detection、smoothing、baseline correction、固定 Concentration/µM UI、CV/CA、ML 和 packaging 均未实现。
+Stage 5.3 建立 backend/API、通用 export 与 event-marker figure。numeric cursor 本身始终只用于 inspection；Stage 5.3.1 GUI 只能通过“从当前游标添加草稿”这一显式动作复制所选曲线的真实采样时间，且 Event Timeline 必须再次由用户确认后才能进入正式分析。自动 event detection、smoothing、baseline correction、固定 Concentration/µM UI、CV/CA、ML 和 packaging 均未实现。
 
 旧 Stage 4 concentration backend 暂作为隔离的历史 compatibility implementation 保留，以保护既有科研回归；新 Generic Event path 不导入它。PB42 的严格 42-file preset 与 snapshot test同样保留为历史科研回归，但 Generic runtime 不再包含固定 A/B/C comparison helper、42-file alias 或 PB42 lazy import。
+
+## Stage 5.3.1 Generic i-t Event GUI
+
+i-t 页面现已启用“数据与曲线 / 分析设置 / 统计结果 / 结果图表”完整工作流。分析设置包含 i-t 专用 Sample ID/Group/Notes metadata（不使用 Bare/Material）、任意 Event name/time/value/unit/notes 的 Event Timeline、默认 20% 的 segment 尾段比例、signed/magnitude 指标，以及默认关闭的可选 Calibration。Timeline 按时间自动排序，Event ID 在编辑中保持稳定；同一时间不能定义两个 Event。空或未确认 Timeline 只能继续 raw preview，不能运行正式分析。
+
+Baseline 明确定义为记录起点至首个 Event；每个 Event 从自身时间延续到下一个 Event，最后一个延续到记录末尾。正式 response、SD、signed ΔI 与 magnitude 全部来自 Stage 5.3 backend 的多点窗口结果。共享 Timeline 可用于 1/N 条不同时长的记录，短记录缺少的后期窗口以 unavailable row 保留，不删除整条记录。
+
+Calibration 不会因 Event 带 numeric value 而自动开启或自动纳入。用户必须显式启用、填写通用 x label/unit，并逐项选择 Events；缺失数值、单位不完全一致或不足两个不同 x 值均由 backend validation 阻止，不进行单位换算。结果区直接展示 backend 的 Event Response、Event Summary、可选 Calibration 和 warnings/QC；图形包括完整 raw curves + Event markers、individual response scatter + group mean ± sample SD，以及通用 OLS calibration。individual response hover 使用正式 Sample ID，不从文件名推断。
+
+每个 Workspace 分别保存 i-t metadata、Event Timeline、settings、result、plot 与 export 状态；i-t 与 LSV workflow 也互相隔离。修改 metadata、Timeline、tail fraction、metric 或 Calibration 会把既有结果标为 stale，重新分析前禁止以新设置导出旧结果。Stage 5.3.1 GUI 暂不暴露 explicit-window editor，但 Stage 5.3 backend 的 explicit `ResponseWindow` 能力继续保留。
 
 ## 安装与测试
 
