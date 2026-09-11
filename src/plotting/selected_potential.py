@@ -35,7 +35,13 @@ class SelectedScatterPoint:
     group: str
     sample_id: str
     x: float
-    current_uA: float
+    value_uA: float
+
+    @property
+    def current_uA(self) -> float:
+        """Backward-compatible alias; ``value_uA`` may be magnitude or signed."""
+
+        return self.value_uA
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +93,7 @@ def build_selected_potential_figure(
                         group=group,
                         sample_id=item.manifest.sample_id or "",
                         x=float(x),
-                        current_uA=float(value),
+                        value_uA=float(value),
                     )
                     for item, x, value in zip(rows, x_values, values, strict=True)
                 ),

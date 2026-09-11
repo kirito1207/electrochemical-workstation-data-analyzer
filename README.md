@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.2.1
+# chi760e-h2o2-analyzer — Stage 5.2.1.1
 
-当前开发状态：**Stage 5.2.1（Generic LSV GUI 易用性、校验与交互加固）**。
+当前开发状态：**Stage 5.2.1.1（指定电位散点图 hover 命中热修复）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -274,7 +274,7 @@ Generic manifest 继续优先保存绝对 `file_path`，允许同一 Workspace �
 
 Workspace 切换现在显式重置未提交 comparison editor 草稿及不存在的 Combobox 文本；已点击“添加”的 ComparisonDraft 仍在各自 Workspace 中独立保存。结果页增加分析摘要、中文列名、MAD 无 flag 的明确成功状态，以及 sign QC 正常/mixed 的易读提示。
 
-GUI 的指定电位 magnitude/signed scatter 支持 Material individual point hover，显示用户确认后的 Sample ID 和对应电流。Hover 只更新内存 annotation，不重新分析或重建 Figure；Bare、mean marker 和 SD errorbar 不参与 hover。静态 PNG/SVG/PDF 导出继续不增加永久 Sample ID 标签，科研数值与 Stage 3/3.1 完全一致。
+GUI 的指定电位 magnitude/signed scatter 支持 Material individual point hover，显示用户确认后的 Sample ID 和对应电流。Stage 5.2.1.1 使用显示坐标中的 10 px 最近点命中，避免 TkAgg/Windows 对个别小型 scatter marker 的 artist hit-test 不稳定；边缘点与 S11 等任意 Sample ID 均无特判。Hover 只更新内存 annotation，不重新分析或重建 Figure；Bare、mean marker 和 SD errorbar 不参与 hover。静态 PNG/SVG/PDF 导出继续不增加永久 Sample ID 标签，科研数值与 Stage 3/3.1 完全一致。
 
 Windows Stage 5.2.1 人工验收清单见 `docs/windows_stage521_checklist.md`。i-t 正式 GUI、CV、CA、ML 和 Windows exe 均未进入本阶段。
 

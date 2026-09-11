@@ -305,21 +305,25 @@ def test_static_selected_plot_has_no_permanent_sample_labels(synthetic_analysis_
 
 def test_hover_updates_only_annotation_without_rebuilding_figure():
     panel = object.__new__(LSVResultPlotPanel)
-    axis = object()
-    artist = Mock(); artist.contains.return_value = (True, {"ind": [0]})
+    axis = Mock()
+    axis.transData.transform.return_value = (20.0, 30.0)
+    axis.bbox.x0 = 0.0; axis.bbox.y0 = 0.0
+    axis.bbox.width = 100.0; axis.bbox.height = 100.0
+    artist = Mock()
     point = SelectedScatterPoint("G", "Confirmed-S11", 0.2, -2.314)
     panel._hover_series = (SelectedScatterSeries(artist, (point,)),)
     panel._hover_annotation = Mock(); panel._hover_annotation.get_visible.return_value = False
     panel.canvas = Mock(); panel.figure = Mock(axes=[axis])
-    event = Mock(inaxes=axis)
+    event = Mock(inaxes=axis, x=20.0, y=30.0)
     panel._hover_motion(event)
     panel._hover_annotation.set_text.assert_called_once_with("Confirmed-S11\n-2.314 µA")
+    artist.contains.assert_not_called()
     panel.canvas.draw_idle.assert_called_once()
 
 
 def test_hover_leave_hides_existing_annotation():
     panel = object.__new__(LSVResultPlotPanel)
-    axis = object(); artist = Mock(); artist.contains.return_value = (False, {})
+    axis = object(); artist = Mock()
     panel._hover_series = (SelectedScatterSeries(artist, (SelectedScatterPoint("G", "S1", 0.0, 1.0),)),)
     panel._hover_annotation = Mock(); panel._hover_annotation.get_visible.return_value = True
     panel.canvas = Mock(); panel.figure = Mock(axes=[axis])

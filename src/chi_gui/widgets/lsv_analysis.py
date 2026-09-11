@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import isfinite
 import tkinter as tk
 from tkinter import simpledialog, ttk
 from time import monotonic
@@ -27,7 +28,11 @@ from chi_gui.metadata_selection import MetadataSelectionModel
 from plotting.lsv_mean import build_mean_lsv_figure
 from plotting.lsv_raw import build_raw_lsv_figure
 from plotting.repeatability import build_repeatability_figure
-from plotting.selected_potential import build_selected_potential_figure
+from plotting.selected_potential import (
+    SelectedScatterPoint,
+    SelectedScatterSeries,
+    build_selected_potential_figure,
+)
 
 
 PLOT_LABELS = {
@@ -39,6 +44,46 @@ PLOT_LABELS = {
     "Repeatability CV%": "重复性 CV%",
 }
 PLOT_KEYS = {label: key for key, label in PLOT_LABELS.items()}
+SELECTED_POINT_HOVER_RADIUS_PX = 10.0
+
+
+def nearest_selected_scatter_point(
+    series_collection: tuple[SelectedScatterSeries, ...],
+    axis,
+    event_x: float,
+    event_y: float,
+    *,
+    radius_px: float = SELECTED_POINT_HOVER_RADIUS_PX,
+) -> SelectedScatterPoint | None:
+    """Return the nearest individual point within a display-space radius.
+
+    Point order is stable, so an exact distance tie deterministically keeps the
+    first point from the confirmed-manifest plotting order.  Artist picking is
+    intentionally not used because TkAgg can miss individual small markers.
+    """
+
+    if not (isfinite(event_x) and isfinite(event_y)) or radius_px < 0:
+        return None
+    best: SelectedScatterPoint | None = None
+    best_distance_sq = radius_px * radius_px
+    for series in series_collection:
+        for point in series.points:
+            display_x, display_y = axis.transData.transform((point.x, point.value_uA))
+            distance_sq = (float(display_x) - event_x) ** 2 + (float(display_y) - event_y) ** 2
+            if distance_sq <= best_distance_sq:
+                if best is None or distance_sq < best_distance_sq:
+                    best = point
+                    best_distance_sq = distance_sq
+    return best
+
+
+def _hover_annotation_offset(axis, point: SelectedScatterPoint) -> tuple[int, int]:
+    """Choose an inward offset so edge annotations remain on the canvas."""
+
+    display_x, display_y = axis.transData.transform((point.x, point.value_uA))
+    bbox = axis.bbox
+    return (-9 if display_x > bbox.x0 + bbox.width / 2 else 9,
+            -9 if display_y > bbox.y0 + bbox.height / 2 else 9)
 
 
 class LSVSettingsPanel(ttk.Frame):
@@ -461,22 +506,27 @@ class LSVResultPlotPanel(ttk.Frame):
         if annotation is None or self.canvas is None:
             return
         found = None
-        if event.inaxes is self.figure.axes[0]:
-            for series in self._hover_series:
-                contains, details = series.artist.contains(event)
-                indices = details.get("ind", ()) if contains else ()
-                if indices:
-                    found = series.points[int(indices[0])]
-                    break
+        axis = self.figure.axes[0]
+        if event.inaxes is axis and event.x is not None and event.y is not None:
+            found = nearest_selected_scatter_point(
+                self._hover_series, axis, float(event.x), float(event.y)
+            )
         if found is None:
             if annotation.get_visible():
                 annotation.set_visible(False)
                 self.canvas.draw_idle()
             return
-        annotation.xy = (found.x, found.current_uA)
-        annotation.set_text(f"{found.sample_id}\n{found.current_uA:.4g} µA")
+        annotation.xy = (found.x, found.value_uA)
+        annotation.set_position(_hover_annotation_offset(axis, found))
+        annotation.set_text(f"{found.sample_id}\n{found.value_uA:.4g} µA")
         annotation.set_visible(True)
         self.canvas.draw_idle()
 
 
-__all__ = ["LSVResultPlotPanel", "LSVResultsPanel", "LSVSettingsPanel"]
+__all__ = [
+    "LSVResultPlotPanel",
+    "LSVResultsPanel",
+    "LSVSettingsPanel",
+    "SELECTED_POINT_HOVER_RADIUS_PX",
+    "nearest_selected_scatter_point",
+]
