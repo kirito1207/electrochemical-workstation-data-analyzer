@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Callable
 
-from ..cursor import CursorReadingSet
+from ..cursor import CursorReadingSet, InspectionCursorState
 from ..state import PreviewCollection
 
 
@@ -17,16 +17,32 @@ class CurveList(ttk.LabelFrame):
         *,
         on_visibility_changed: Callable[[str, bool], None],
         on_clear_cursor: Callable[[], None],
+        on_cursor_submitted: Callable[[str], None],
+        on_cursor_step: Callable[[int], None],
     ):
         super().__init__(master, text="曲线列表（仅控制预览）")
         self._callback = on_visibility_changed
         self._clear_cursor = on_clear_cursor
+        self._submit_cursor = on_cursor_submitted
+        self._step_cursor = on_cursor_step
         self._variables: dict[str, tk.BooleanVar] = {}
 
         heading = ttk.Frame(self)
         heading.pack(fill="x", padx=6, pady=(4, 0))
-        self.cursor_text = tk.StringVar(value="游标：—")
-        ttk.Label(heading, textvariable=self.cursor_text).pack(side="left")
+        ttk.Label(heading, text="游标：").pack(side="left")
+        self.cursor_input = tk.StringVar()
+        self.cursor_entry = ttk.Entry(heading, textvariable=self.cursor_input, width=11)
+        self.cursor_entry.pack(side="left")
+        self.cursor_entry.bind("<Return>", self._cursor_entered)
+        self.cursor_entry.bind("<KP_Enter>", self._cursor_entered)
+        self.cursor_entry.bind("<Left>", lambda event: self._cursor_key(event, -1))
+        self.cursor_entry.bind("<Right>", lambda event: self._cursor_key(event, 1))
+        self.cursor_unit = tk.StringVar(value="")
+        ttk.Label(heading, textvariable=self.cursor_unit).pack(side="left", padx=(3, 5))
+        self.cursor_status = tk.StringVar(value="")
+        ttk.Label(heading, textvariable=self.cursor_status, foreground="#a34a00").pack(
+            side="left"
+        )
         ttk.Label(heading, text="Current / µA").pack(side="right", padx=(8, 2))
         ttk.Button(heading, text="清除游标", command=self._clear_cursor).pack(
             side="right", padx=(4, 8)
@@ -48,18 +64,16 @@ class CurveList(ttk.LabelFrame):
         self,
         collection: PreviewCollection | None,
         readings: CursorReadingSet | None = None,
+        cursor_state: InspectionCursorState | None = None,
     ) -> None:
         for child in self.inner.winfo_children():
             child.destroy()
         self._variables.clear()
-        if readings is None:
-            self.cursor_text.set("游标：—")
-            readings_by_key = {}
-        else:
-            unit = "V" if readings.experiment_type == "LSV" else "s"
-            precision = 3 if readings.experiment_type == "LSV" else 1
-            self.cursor_text.set(f"游标：{readings.requested_x:.{precision}f} {unit}")
-            readings_by_key = readings.by_record_key()
+        experiment_type = collection.experiment_type if collection is not None else ""
+        self.cursor_unit.set("V" if experiment_type == "LSV" else "s" if experiment_type == "i-t" else "")
+        self.cursor_input.set(cursor_state.input_text if cursor_state is not None else "")
+        self.cursor_status.set(cursor_state.validation_message if cursor_state is not None else "")
+        readings_by_key = readings.by_record_key() if readings is not None else {}
         if collection is None or not collection.curves:
             ttk.Label(self.inner, text="暂无曲线", padding=5).grid(sticky="w")
             return
@@ -86,6 +100,14 @@ class CurveList(ttk.LabelFrame):
                 row=row, column=2, padx=(8, 4), sticky="e"
             )
         self.inner.columnconfigure(1, weight=1)
+
+    def _cursor_entered(self, _event: tk.Event) -> str:
+        self._submit_cursor(self.cursor_input.get())
+        return "break"
+
+    def _cursor_key(self, _event: tk.Event, direction: int) -> str:
+        self._step_cursor(direction)
+        return "break"
 
     def _sync_scrollregion(self, _event: tk.Event) -> None:
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))

@@ -53,14 +53,79 @@ class InspectionCursorState:
 
     requested_x: float | None = None
     visible: bool = False
+    input_text: str = ""
+    validation_message: str = ""
 
-    def set(self, value: float) -> None:
+    def set(self, value: float, *, input_text: str | None = None) -> None:
         self.requested_x = float(value)
         self.visible = True
+        self.input_text = input_text if input_text is not None else str(float(value))
+        self.validation_message = ""
+
+    def invalidate(self, input_text: str, message: str) -> None:
+        self.requested_x = None
+        self.visible = False
+        self.input_text = input_text
+        self.validation_message = message
 
     def clear(self) -> None:
         self.requested_x = None
         self.visible = False
+        self.input_text = ""
+        self.validation_message = ""
+
+
+def parse_cursor_input(text: str) -> float | None:
+    """Parse a finite cursor value without raising a GUI-facing exception."""
+
+    try:
+        value = float(text.strip())
+    except (TypeError, ValueError):
+        return None
+    return value if np.isfinite(value) else None
+
+
+def format_cursor_input(experiment_type: str, value: float) -> str:
+    """Compact display text while retaining useful sub-sample precision."""
+
+    minimum_decimals = 3 if experiment_type == "LSV" else 1
+    text = f"{float(value):.9f}".rstrip("0").rstrip(".")
+    if "." not in text:
+        return f"{text}.{'0' * minimum_decimals}"
+    integer, decimals = text.split(".", 1)
+    return f"{integer}.{decimals.ljust(minimum_decimals, '0')}"
+
+
+def step_cursor_on_axis(
+    axis: np.ndarray,
+    current_x: float | None,
+    direction: int,
+) -> float:
+    """Move to a real neighboring sample, clamping silently at boundaries."""
+
+    if direction not in {-1, 1}:
+        raise ValueError("direction must be -1 or 1")
+    values = np.asarray(axis, dtype=np.float64)
+    if values.ndim != 1 or len(values) == 0:
+        raise ValueError("cursor axis must be a non-empty one-dimensional array")
+    if not np.all(np.isfinite(values)) or (len(values) > 1 and not np.all(np.diff(values) > 0)):
+        raise ValueError("cursor axis must contain finite, strictly increasing values")
+
+    if current_x is None or not np.isfinite(current_x):
+        return float(values[0] if direction > 0 else values[-1])
+
+    if len(values) == 1:
+        return float(values[0])
+    tolerance = max(1e-12, float(np.min(np.diff(values))) * 1e-5)
+    exact = np.flatnonzero(np.isclose(values, current_x, rtol=0.0, atol=tolerance))
+    if exact.size:
+        current_index = int(exact[np.argmin(np.abs(values[exact] - current_x))])
+        target_index = current_index + direction
+    elif direction < 0:
+        target_index = int(np.searchsorted(values, current_x, side="left")) - 1
+    else:
+        target_index = int(np.searchsorted(values, current_x, side="right"))
+    return float(values[min(max(target_index, 0), len(values) - 1)])
 
 
 def read_cursor_value(record: FileRecord, requested_x: float) -> CursorReading:
@@ -162,5 +227,8 @@ __all__ = [
     "CursorReadingSet",
     "InspectionCursorState",
     "build_cursor_readings",
+    "format_cursor_input",
+    "parse_cursor_input",
     "read_cursor_value",
+    "step_cursor_on_axis",
 ]

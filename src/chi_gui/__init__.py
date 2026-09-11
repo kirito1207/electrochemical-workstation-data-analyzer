@@ -6,7 +6,10 @@ from .cursor import (
     CursorReadingSet,
     InspectionCursorState,
     build_cursor_readings,
+    format_cursor_input,
+    parse_cursor_input,
     read_cursor_value,
+    step_cursor_on_axis,
 )
 from .state import (
     AppState,
@@ -34,5 +37,8 @@ __all__ = [
     "WorkspaceManager",
     "WorkspaceSession",
     "build_cursor_readings",
+    "format_cursor_input",
+    "parse_cursor_input",
     "read_cursor_value",
+    "step_cursor_on_axis",
 ]

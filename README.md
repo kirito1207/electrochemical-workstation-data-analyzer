@@ -1,6 +1,6 @@
-# chi760e-h2o2-analyzer — Stage 5.1.3.1
+# chi760e-h2o2-analyzer — Stage 5.1.4
 
-当前开发状态：**Stage 5.1.3.1（Windows GUI responsiveness hotfix）**。
+当前开发状态：**Stage 5.1.4（精确数值游标控制）**。
 
 本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
@@ -239,6 +239,14 @@ LSV 游标读数直接调用已验证的 `extract_current_at_potential()`：命�
 Windows 验收发现，程序化 `Treeview.selection_set()` 可能派发 `<<TreeviewSelect>>`，而选择回调此前会再次执行完整 preview render 并重新设置同一 selection，形成事件递归。当前 `FileTable` 使用 selection-event guard 同时阻止同步和延迟到达的程序化选择事件，并在目标 key 已选中时跳过无意义的 `selection_set()`。`MainWindow` 另有 selected-state 幂等检查，相同 selected key 不再触发曲线列表重建、Matplotlib 重绘或参数刷新。
 
 一次真实用户选择变化只产生一次有效 preview render；导入完成后的首个成功文件仍自动选中，但后续程序化同步不会重新进入用户回调。该修复保留多曲线 preview、LSV/i-t cursor、inline readings、visibility、稳定颜色、Workspace 独立状态和折叠日志，不修改 parser、analysis/statistics、i-t calibration 或任何原始数组。
+
+## Stage 5.1.4 Precise numeric cursor control
+
+右侧曲线列表标题区提供紧凑数值输入框。LSV 输入单位为 V，i-t 输入单位为 s；按 Enter 后与 workspace-local inspection cursor、图中垂直线和所有可见曲线的内联电流读数同步。LSV 任意范围内数值继续复用 extract_current_at_potential()，采样点读取 raw current、点间执行线性插值；i-t 读数使用最近真实采样点，并保留 requested time 与 actual sampled time。
+
+当 plot preview 或游标输入框具有焦点时，←/→ 会移动到前一个或后一个真实 x-axis sample，不假定固定 potential increment 或 sample interval。处于两点之间时分别跳到左右包围采样点，到达边界后保持边界。按键没有进行全局绑定，因此不会影响其他 Entry 或 Text 控件的正常编辑。
+
+空值、非数值、NaN、Inf 或全部可见曲线范围外的输入均采用安静的 inline 状态：隐藏 vertical line、读数显示“—”，并在输入框旁显示简短提示，不弹窗、不写大量错误日志。每个 Workspace 分别保存输入文本、有效 cursor value、visible state 和提示。该 inspection cursor 仍不连接 analysis target potential、i-t StepProtocol、样本 inclusion 或统计逻辑。
 
 ## 安装与测试
 

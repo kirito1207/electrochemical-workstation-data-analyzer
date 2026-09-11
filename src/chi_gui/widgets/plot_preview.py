@@ -31,13 +31,19 @@ class PlotPreview(ttk.LabelFrame):
         master: tk.Misc,
         *,
         on_cursor_clicked: Callable[[float], None] | None = None,
+        on_cursor_step: Callable[[int], None] | None = None,
     ):
         super().__init__(master, text="原始曲线预览")
         self._on_cursor_clicked = on_cursor_clicked
+        self._on_cursor_step = on_cursor_step
         self.figure = Figure(figsize=(6.4, 4.0), dpi=100, constrained_layout=True)
         self.axis = self.figure.add_subplot(111)
         self.canvas = FigureCanvasTkAgg(self.figure, master=self)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        canvas_widget = self.canvas.get_tk_widget()
+        canvas_widget.configure(takefocus=True)
+        canvas_widget.pack(fill="both", expand=True)
+        canvas_widget.bind("<Left>", lambda event: self._handle_key(event, -1))
+        canvas_widget.bind("<Right>", lambda event: self._handle_key(event, 1))
         self.canvas.mpl_connect("button_press_event", self._handle_click)
         self.clear("请选择一个解析成功的文件")
 
@@ -48,7 +54,13 @@ class PlotPreview(ttk.LabelFrame):
             and event.inaxes is self.axis
             and event.xdata is not None
         ):
+            self.canvas.get_tk_widget().focus_set()
             self._on_cursor_clicked(float(event.xdata))
+
+    def _handle_key(self, _event: tk.Event, direction: int) -> str:
+        if self._on_cursor_step is not None:
+            self._on_cursor_step(direction)
+        return "break"
 
     def clear(self, message: str = "暂无预览") -> None:
         self.axis.clear()

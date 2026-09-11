@@ -8,7 +8,13 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from .background import BackgroundRunner, WorkerEvent
 from .controller import GUIController, discover_bin_files
-from .cursor import CursorReadingSet, build_cursor_readings
+from .cursor import (
+    CursorReadingSet,
+    build_cursor_readings,
+    format_cursor_input,
+    parse_cursor_input,
+    step_cursor_on_axis,
+)
 from .dialogs import confirm_close_while_busy, show_record_details
 from .formatting import parameter_rows
 from .pages import IT_STAGE_MESSAGE, LSV_STAGE_MESSAGE, WELCOME_MESSAGE, unsupported_message
@@ -147,7 +153,11 @@ class MainWindow:
 
         lower = ttk.Panedwindow(workspace, orient="horizontal")
         lower.grid(row=4, column=0, sticky="nsew", pady=(6, 0))
-        self.plot_preview = PlotPreview(lower, on_cursor_clicked=self._cursor_clicked)
+        self.plot_preview = PlotPreview(
+            lower,
+            on_cursor_clicked=self._cursor_clicked,
+            on_cursor_step=self._cursor_step,
+        )
         lower.add(self.plot_preview, weight=3)
 
         info = ttk.Frame(lower)
@@ -158,6 +168,8 @@ class MainWindow:
             info,
             on_visibility_changed=self._visibility_changed,
             on_clear_cursor=self._clear_cursor,
+            on_cursor_submitted=self._cursor_submitted,
+            on_cursor_step=self._cursor_step,
         )
         self.curve_list.grid(row=0, column=0, sticky="nsew")
         self.parameter_box = ttk.LabelFrame(info, text="实验参数")
@@ -282,9 +294,9 @@ class MainWindow:
         )
         self.selected_by_route[experiment_type] = collection.selected_key
         readings = self._cursor_readings(collection, experiment_type)
-        self.curve_list.set_collection(collection, readings)
+        cursor = self.workspace.cursor_by_route[experiment_type]
+        self.curve_list.set_collection(collection, readings, cursor)
         if collection.curves:
-            cursor = self.workspace.cursor_by_route[experiment_type]
             self.plot_preview.show_collection(
                 collection,
                 cursor_x=cursor.requested_x if cursor.visible else None,
@@ -313,6 +325,23 @@ class MainWindow:
     def _cursor_clicked(self, requested_x: float) -> None:
         if self.current_route not in {"LSV", "i-t"}:
             return
+        self._apply_cursor_value(
+            requested_x,
+            input_text=format_cursor_input(self.current_route, requested_x),
+        )
+
+    def _cursor_submitted(self, text: str) -> None:
+        if self.current_route not in {"LSV", "i-t"}:
+            return
+        value = parse_cursor_input(text)
+        if value is None:
+            cursor = self.workspace.cursor_by_route[self.current_route]
+            cursor.invalidate(text, "请输入有限数值")
+            self._render_technique_preview(self.current_route)
+            return
+        self._apply_cursor_value(value, input_text=text.strip())
+
+    def _apply_cursor_value(self, requested_x: float, *, input_text: str) -> bool:
         collection = self.controller.build_preview_collection(
             self.state.records,
             experiment_type=self.current_route,
@@ -321,10 +350,46 @@ class MainWindow:
         )
         candidate = build_cursor_readings(self.state.records, collection, requested_x)
         if not any(reading.available for reading in candidate.readings):
-            self._log("游标位置超出当前可见曲线的记录范围，未进行外推。")
-            return
-        self.workspace.cursor_by_route[self.current_route].set(requested_x)
+            self.workspace.cursor_by_route[self.current_route].invalidate(
+                input_text,
+                "超出范围",
+            )
+            self._render_technique_preview(self.current_route)
+            return False
+        self.workspace.cursor_by_route[self.current_route].set(
+            requested_x,
+            input_text=input_text,
+        )
         self._render_technique_preview(self.current_route)
+        return True
+
+    def _cursor_step(self, direction: int) -> None:
+        if self.current_route not in {"LSV", "i-t"}:
+            return
+        collection = self.controller.build_preview_collection(
+            self.state.records,
+            experiment_type=self.current_route,
+            display_state=self.preview_display,
+            selected_key=self.selected_by_route[self.current_route],
+        )
+        visible = collection.visible_curves
+        if not visible:
+            cursor = self.workspace.cursor_by_route[self.current_route]
+            cursor.invalidate(cursor.input_text, "无可见曲线")
+            self._render_technique_preview(self.current_route)
+            return
+        reference = next((curve for curve in visible if curve.selected), visible[0])
+        cursor = self.workspace.cursor_by_route[self.current_route]
+        current = cursor.requested_x
+        if current is None:
+            current = parse_cursor_input(cursor.input_text)
+        target = step_cursor_on_axis(reference.data.x, current, direction)
+        if cursor.visible and cursor.requested_x == target:
+            return
+        self._apply_cursor_value(
+            target,
+            input_text=format_cursor_input(self.current_route, target),
+        )
 
     def _clear_cursor(self) -> None:
         if self.current_route not in {"LSV", "i-t"}:
