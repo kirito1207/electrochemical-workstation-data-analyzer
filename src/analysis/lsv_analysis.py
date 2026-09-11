@@ -23,7 +23,9 @@ from .sign_qc import CurrentSignQC, evaluate_current_signs
 from .statistics import (
     ComparisonDefinition,
     ComparisonResult,
+    OmnibusTestResult,
     compare_defined_groups,
+    compute_omnibus_tests,
 )
 
 
@@ -82,6 +84,7 @@ class LSVAnalysisResult:
     current_sign_qc: tuple[CurrentSignQC, ...]
     warnings: tuple[str, ...]
     exclusion_log: tuple[str, ...] = ()
+    omnibus_tests: tuple[OmnibusTestResult, ...] = ()
 
     def summary(self, group: str, metric: AnalysisMetric) -> GroupSummary:
         return next(
@@ -239,6 +242,13 @@ def analyze_lsv_with_manifest(
         if item.group != "ALL" and item.warning
     )
 
+    omnibus_tests = compute_omnibus_tests(grouped_primary)
+    warnings += tuple(
+        f"{item.test} 未计算：{item.notes}"
+        for item in omnibus_tests
+        if item.status == "unavailable"
+    )
+
     comparison_results = compare_defined_groups(
         grouped_primary,
         comparisons,
@@ -254,6 +264,7 @@ def analyze_lsv_with_manifest(
         outlier_flags=tuple(outlier_flags),
         current_sign_qc=tuple(current_sign_qc),
         warnings=warnings,
+        omnibus_tests=omnibus_tests,
     )
 
 

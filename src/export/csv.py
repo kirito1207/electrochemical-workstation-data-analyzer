@@ -71,6 +71,26 @@ def _statistics_rows(result: LSVAnalysisResult) -> list[dict[str, object]]:
     ]
 
 
+STATISTICS_FIELDS = (
+    "target_potential_V", "analysis_metric", "comparison", "comparison_role",
+    "holm_family", "test", "statistic", "raw_p", "holm_adjusted_p",
+    "mean_difference", "mean_difference_ci_low", "mean_difference_ci_high",
+    "hedges_g", "hedges_g_ci_low", "hedges_g_ci_high", "bootstrap_seed",
+    "bootstrap_resamples",
+)
+
+
+def _omnibus_rows(result: LSVAnalysisResult) -> list[dict[str, object]]:
+    return [
+        {
+            "target_potential_V": result.settings.target_potential_V,
+            "analysis_metric": result.settings.analysis_metric,
+            **asdict(item),
+        }
+        for item in result.omnibus_tests
+    ]
+
+
 def export_csv_bundle(result: LSVAnalysisResult, output_dir: str | Path) -> tuple[Path, ...]:
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -129,7 +149,15 @@ def export_csv_bundle(result: LSVAnalysisResult, output_dir: str | Path) -> tupl
     )
     statistics_rows = _statistics_rows(result)
     generated.append(
-        _write_rows(output / "statistics.csv", statistics_rows, tuple(statistics_rows[0]))
+        _write_rows(output / "statistics.csv", statistics_rows, STATISTICS_FIELDS)
+    )
+    omnibus_rows = _omnibus_rows(result)
+    omnibus_fields = (
+        "target_potential_V", "analysis_metric", "test", "statistic", "df1", "df2",
+        "p_value", "group_count", "total_n", "status", "notes",
+    )
+    generated.append(
+        _write_rows(output / "omnibus_statistics.csv", omnibus_rows, omnibus_fields)
     )
 
     outlier_rows = [asdict(item) for item in result.outlier_flags]
@@ -176,4 +204,10 @@ def export_csv_bundle(result: LSVAnalysisResult, output_dir: str | Path) -> tupl
     return tuple(generated)
 
 
-__all__ = ["export_csv_bundle", "_selected_rows", "_statistics_rows", "_summary_rows"]
+__all__ = [
+    "export_csv_bundle",
+    "_omnibus_rows",
+    "_selected_rows",
+    "_statistics_rows",
+    "_summary_rows",
+]

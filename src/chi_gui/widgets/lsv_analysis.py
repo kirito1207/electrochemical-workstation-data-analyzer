@@ -19,6 +19,8 @@ from chi_gui.lsv_workflow import (
     comparison_draft_error,
     descriptive_display_rows,
     mad_result_status,
+    omnibus_display_rows,
+    omnibus_result_status,
     outlier_display_rows,
     result_summary_text,
     sign_qc_display_rows,
@@ -164,7 +166,7 @@ class LSVSettingsPanel(ttk.Frame):
         ttk.Label(settings, text="Group 表示实验条件；Material / Bare 由电极类型单独指定。\n同一实验条件的 Bare 和 Material 可以使用同一个 Group。",
                   foreground="#555555", wraplength=320).grid(row=5, column=0, columnspan=3, sticky="w", pady=(5, 0))
 
-        comparisons = ttk.LabelFrame(lower, text="用户定义比较", padding=6)
+        comparisons = ttk.LabelFrame(lower, text="用户定义组间比较", padding=6)
         lower.add(comparisons, weight=2)
         self.comparison_tree = ttk.Treeview(comparisons, columns=("left", "right", "role", "family", "name"), show="headings", height=5)
         for key, label, width in (("left", "左组", 70), ("right", "右组", 70), ("role", "角色", 90),
@@ -369,10 +371,13 @@ class LSVResultsPanel(ttk.Frame):
             "描述统计": (("group", "组别"), ("n", "n"), ("mean", "均值"), ("median", "中位数"),
                      ("sd", "SD"), ("sem", "SEM"), ("cv_percent", "CV%"),
                      ("minimum", "最小值"), ("q1", "Q1"), ("q3", "Q3"), ("maximum", "最大值")),
-            "组间比较": (("comparison", "比较"), ("role", "类型"), ("welch_p", "Welch p"),
+            "用户定义组间比较": (("comparison", "比较"), ("role", "类型"), ("welch_p", "Welch p"),
                      ("holm_p", "Holm校正 p"), ("mann_whitney_p", "Mann–Whitney p"),
                      ("mean_difference", "均值差"), ("mean_difference_ci", "均值差95% CI"),
-                     ("hedges_g", "Hedges' g"), ("hedges_g_ci", "Hedges' g 95% CI")),
+                      ("hedges_g", "Hedges' g"), ("hedges_g_ci", "Hedges' g 95% CI")),
+            "整体多组比较": (("test", "检验"), ("statistic", "Statistic"), ("df1", "df1"),
+                         ("df2", "df2"), ("p", "p-value"), ("status", "状态"),
+                         ("notes", "说明")),
             "方向 QC": (("group", "组别"), ("negative", "负电流"), ("positive", "正电流"),
                     ("near_zero", "近零"), ("consistent", "方向一致"), ("warning", "提示")),
             "MAD 标记": (("sample_id", "Sample ID"), ("group", "组别"), ("current", "Current / µA"),
@@ -403,7 +408,8 @@ class LSVResultsPanel(ttk.Frame):
     def render(self, state: LSVWorkflowState) -> None:
         self.status.set(result_summary_text(state.analysis_result) if state.analysis_result else state.result_status)
         result = state.analysis_result
-        mappings = (("描述统计", descriptive_display_rows), ("组间比较", comparison_display_rows),
+        mappings = (("描述统计", descriptive_display_rows), ("用户定义组间比较", comparison_display_rows),
+                    ("整体多组比较", omnibus_display_rows),
                     ("方向 QC", sign_qc_display_rows), ("MAD 标记", outlier_display_rows))
         for title, getter in mappings:
             tree = self.tables[title]
@@ -416,7 +422,8 @@ class LSVResultsPanel(ttk.Frame):
             self.table_status["MAD 标记"].set(mad_result_status(result))
             self.table_status["方向 QC"].set(sign_qc_result_status(result))
             self.table_status["描述统计"].set(f"正式指标：{result.settings.analysis_metric}；单位：µA")
-            self.table_status["组间比较"].set("仅显示用户预先定义的 comparisons。")
+            self.table_status["用户定义组间比较"].set("仅显示用户预先定义的 comparisons。")
+            self.table_status["整体多组比较"].set(omnibus_result_status(result))
             lines = ["默认全部纳入；MAD 仅标记，不自动删除。"]
             lines.extend(result.warnings or ("无 current sign warning。",))
             if state.result_stale:

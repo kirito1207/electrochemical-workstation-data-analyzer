@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.2.2
+# Electrochemical Workstation Data Analyzer — Stage 5.2.3
 
-当前开发状态：**Stage 5.2.2（Generic LSV multi-group workflow and GUI layout hardening）**。
+当前开发状态：**Stage 5.2.3（Multi-group overall condition-effect statistics）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -293,6 +293,14 @@ Generic LSV GUI 现由用户确认后的 Material metadata 自动识别 1、2、
 数据页使用独立、有左右最小宽度和可恢复 sash fraction 的 `tk.PanedWindow`。切换 workflow tab、窗口 resize 或 Workspace 后会恢复合理比例；结果页的 Treeview/Matplotlib requested geometry 不再参与数据页分栏计算。右侧曲线列表使用有界显示名与首选宽度，完整路径仍可在实验参数/详情中查看，长文件名不会继续撑大右栏。
 
 Stage 5.2.2 没有新增 ANOVA、Welch ANOVA、Kruskal–Wallis、Tukey、Games–Howell 或 Dunn，也没有修改 parser、selected-potential extraction、描述统计公式、pairwise statistics、MAD、sign QC 或 i-t backend。Windows 人工验收清单见 `docs/windows_stage522_checklist.md`。
+
+## Stage 5.2.3 多组整体条件效应统计
+
+当全部已确认且 included 的 Material Groups 达到 3 组或更多时，Generic LSV 正式分析会基于当前 selected-potential 正式指标并列报告 one-way Welch ANOVA 与 Kruskal–Wallis sensitivity analysis。Welch ANOVA 不假设各组等方差；Kruskal–Wallis 回答多组响应分布/rank 的整体差异问题，两者不会互相充当“确认”关系。每组均采用保守的 `n >= 2` policy；不满足、存在非有限值、零组内方差或所有 rank 值完全相同时，会返回带原因的 unavailable 状态而非静默 NaN。
+
+统计结果页新增独立的“整体多组比较”区域，展示 statistic、Welch numerator/denominator df、Kruskal–Wallis df、p-value、状态与说明。1 组或 2 组时会明确显示不适用。整体检验始终使用全部 Material Groups，不提供选择性 group subset；Bare 继续排除。结果导出新增 `omnibus_statistics.csv`、Excel `Omnibus statistics` sheet，并在 provenance JSON 中记录方法和完整结果。
+
+此设计是 additive：原有“分析设置 → 用户定义比较”中的 Left Group、Right Group、Role、Holm Family 和 Name 编辑流程保持不变。用户定义的 pairwise comparisons 始终照常执行，既不会由 omnibus p-value 控制，也不会自动生成所有两两组合；原有 Welch independent-samples t-test、Mann–Whitney、mean difference、bootstrap CI、Hedges' g 和 Holm correction 公式与语义均未修改。Stage 5.2.3 未新增 classical ANOVA、Tukey、Games–Howell、Dunn、paired/repeated-measures 或 mixed-effects models，也未修改 selected plots、parser 或 i-t backend。Windows 人工验收清单见 `docs/windows_stage523_checklist.md`。
 
 ## 安装与测试
 

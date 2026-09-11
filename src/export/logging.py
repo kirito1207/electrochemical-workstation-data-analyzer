@@ -20,6 +20,8 @@ def export_analysis_settings(result: LSVAnalysisResult, path: str | Path) -> Pat
             "template_name": result.manifest.template_name,
         },
         "statistical_methods": {
+            "overall_primary_test": "One-way Welch ANOVA using all Material Groups",
+            "overall_sensitivity_test": "Kruskal-Wallis using all Material Groups",
             "primary_test": "Welch independent-samples t-test",
             "sensitivity_test": "Mann-Whitney U, two-sided",
             "multiple_comparison": (
@@ -30,6 +32,7 @@ def export_analysis_settings(result: LSVAnalysisResult, path: str | Path) -> Pat
             "outliers": result.settings.outlier_method,
             "exclusions": "All data included",
         },
+        "omnibus_tests": [asdict(item) for item in result.omnibus_tests],
         "current_sign_qc": [asdict(item) for item in result.current_sign_qc],
         "warnings": list(result.warnings),
         "source_files": [

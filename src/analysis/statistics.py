@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, replace
-from typing import Mapping, Sequence
+from typing import Literal, Mapping, Sequence
 
 import numpy as np
 from scipy import stats
@@ -40,6 +40,182 @@ class ComparisonDefinition:
     @property
     def comparison_name(self) -> str:
         return self.name or f"{self.left_group}-{self.right_group}"
+
+
+OmnibusStatus = Literal["ok", "not_applicable", "unavailable"]
+
+
+@dataclass(frozen=True, slots=True)
+class OmnibusTestResult:
+    """One overall multi-group test, including structured non-result states."""
+
+    test: str
+    statistic: float | None
+    df1: float | None
+    df2: float | None
+    p_value: float | None
+    group_count: int
+    total_n: int
+    status: OmnibusStatus
+    notes: str = ""
+
+
+def _omnibus_arrays(
+    grouped_values: Mapping[str, Sequence[float]],
+) -> tuple[tuple[str, ...], tuple[np.ndarray, ...], int]:
+    names = tuple(grouped_values)
+    arrays = tuple(np.asarray(grouped_values[name], dtype=np.float64) for name in names)
+    if any(values.ndim != 1 for values in arrays):
+        raise ValueError("Omnibus tests require one-dimensional group observations.")
+    return names, arrays, sum(len(values) for values in arrays)
+
+
+def _omnibus_precheck(
+    test: str,
+    names: tuple[str, ...],
+    arrays: tuple[np.ndarray, ...],
+    total_n: int,
+) -> OmnibusTestResult | None:
+    group_count = len(names)
+    if group_count < 3:
+        return OmnibusTestResult(
+            test, None, None, None, None, group_count, total_n, "not_applicable",
+            "Overall multi-group testing requires at least 3 Material Groups.",
+        )
+    short = [name for name, values in zip(names, arrays, strict=True) if len(values) < 2]
+    if short:
+        details = ", ".join(
+            f"{name} (n={len(values)})"
+            for name, values in zip(names, arrays, strict=True)
+            if len(values) < 2
+        )
+        return OmnibusTestResult(
+            test, None, float(group_count - 1), None, None, group_count, total_n,
+            "unavailable", f"Each Material Group requires n >= 2; insufficient: {details}.",
+        )
+    invalid = [
+        name for name, values in zip(names, arrays, strict=True)
+        if not np.isfinite(values).all()
+    ]
+    if invalid:
+        return OmnibusTestResult(
+            test, None, float(group_count - 1), None, None, group_count, total_n,
+            "unavailable", "Non-finite observations in Group(s): " + ", ".join(invalid) + ".",
+        )
+    return None
+
+
+def welch_anova(
+    grouped_values: Mapping[str, Sequence[float]],
+) -> OmnibusTestResult:
+    """Calculate standard one-way Welch ANOVA without equal variances.
+
+    This uses weights ``w_i = n_i / s_i**2`` and the Welch (1951)
+    correction. SciPy's F survival function is used only to convert the
+    statistic and degrees of freedom to a p-value. This remains compatible
+    with SciPy versions before ``f_oneway`` gained ``equal_var``.
+    """
+
+    names, arrays, total_n = _omnibus_arrays(grouped_values)
+    precheck = _omnibus_precheck("Welch ANOVA", names, arrays, total_n)
+    if precheck is not None:
+        return precheck
+    group_count = len(arrays)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        variances = np.asarray(
+            [np.var(values, ddof=1) for values in arrays], dtype=np.float64
+        )
+    zero_variance = [
+        name for name, variance in zip(names, variances, strict=True)
+        if not math.isfinite(float(variance)) or variance <= 0.0
+    ]
+    if zero_variance:
+        return OmnibusTestResult(
+            "Welch ANOVA", None, float(group_count - 1), None, None,
+            group_count, total_n, "unavailable",
+            "Welch ANOVA is undefined for zero within-group variance: "
+            + ", ".join(zero_variance) + ".",
+        )
+
+    sizes = np.asarray([len(values) for values in arrays], dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore"):
+        means = np.asarray([np.mean(values) for values in arrays], dtype=np.float64)
+    with np.errstate(over="ignore", invalid="ignore", divide="ignore"):
+        weights = sizes / variances
+        weight_sum = float(np.sum(weights))
+        weighted_mean = float(np.sum(weights * means) / weight_sum)
+        adjustment_sum = float(
+            np.sum(((1.0 - weights / weight_sum) ** 2) / (sizes - 1.0))
+        )
+    if not math.isfinite(adjustment_sum) or adjustment_sum <= 0.0:
+        return OmnibusTestResult(
+            "Welch ANOVA", None, float(group_count - 1), None, None,
+            group_count, total_n, "unavailable",
+            "Welch ANOVA denominator degrees of freedom could not be calculated.",
+        )
+    numerator = float(np.sum(weights * (means - weighted_mean) ** 2) / (group_count - 1))
+    correction = 1.0 + (
+        2.0 * (group_count - 2.0) / (group_count**2 - 1.0)
+    ) * adjustment_sum
+    statistic = numerator / correction
+    df1 = float(group_count - 1)
+    df2 = float((group_count**2 - 1.0) / (3.0 * adjustment_sum))
+    p_value = float(stats.f.sf(statistic, df1, df2))
+    if not all(math.isfinite(value) for value in (statistic, df1, df2, p_value)):
+        return OmnibusTestResult(
+            "Welch ANOVA", None, df1, df2, None, group_count, total_n,
+            "unavailable", "Welch ANOVA produced a non-finite result.",
+        )
+    return OmnibusTestResult(
+        "Welch ANOVA", statistic, df1, df2, p_value,
+        group_count, total_n, "ok",
+    )
+
+
+def kruskal_wallis(
+    grouped_values: Mapping[str, Sequence[float]],
+) -> OmnibusTestResult:
+    """Calculate the Kruskal-Wallis rank-based sensitivity analysis."""
+
+    names, arrays, total_n = _omnibus_arrays(grouped_values)
+    precheck = _omnibus_precheck("Kruskal-Wallis", names, arrays, total_n)
+    if precheck is not None:
+        return precheck
+    group_count = len(arrays)
+    pooled = np.concatenate(arrays)
+    if np.all(pooled == pooled[0]):
+        return OmnibusTestResult(
+            "Kruskal-Wallis", None, float(group_count - 1), None, None,
+            group_count, total_n, "unavailable",
+            "All observations are identical; the rank statistic is undefined.",
+        )
+    try:
+        result = stats.kruskal(*arrays, nan_policy="raise")
+    except ValueError as error:
+        return OmnibusTestResult(
+            "Kruskal-Wallis", None, float(group_count - 1), None, None,
+            group_count, total_n, "unavailable", str(error),
+        )
+    statistic = float(result.statistic)
+    p_value = float(result.pvalue)
+    if not math.isfinite(statistic) or not math.isfinite(p_value):
+        return OmnibusTestResult(
+            "Kruskal-Wallis", None, float(group_count - 1), None, None,
+            group_count, total_n, "unavailable",
+            "Kruskal-Wallis produced a non-finite result.",
+        )
+    return OmnibusTestResult(
+        "Kruskal-Wallis", statistic, float(group_count - 1), None, p_value,
+        group_count, total_n, "ok",
+    )
+
+
+def compute_omnibus_tests(
+    grouped_values: Mapping[str, Sequence[float]],
+) -> tuple[OmnibusTestResult, OmnibusTestResult]:
+    """Report both fixed omnibus tests without gating pairwise comparisons."""
+
+    return welch_anova(grouped_values), kruskal_wallis(grouped_values)
 
 
 def holm_adjust(p_values: Sequence[float]) -> tuple[float, ...]:
@@ -237,8 +413,12 @@ def compare_defined_groups(
 __all__ = [
     "ComparisonDefinition",
     "ComparisonResult",
+    "OmnibusTestResult",
+    "compute_omnibus_tests",
     "compare_defined_groups",
     "compare_groups",
     "hedges_g",
     "holm_adjust",
+    "kruskal_wallis",
+    "welch_anova",
 ]

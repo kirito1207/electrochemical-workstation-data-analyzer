@@ -323,7 +323,8 @@ def test_generic_confirmed_manifest_runs_traceable_exports_and_figures(tmp_path,
         settings=_settings(-0.05),
     )
 
-    assert len(run.generated_files) == 39
+    assert len(run.generated_files) == 40
+    assert any(path.name == "omnibus_statistics.csv" for path in run.generated_files)
     assert all(path.exists() and path.stat().st_size > 0 for path in run.generated_files)
     assert (run.output_directory / "LSV" / "excel" / "LSV_analysis.xlsx").exists()
     assert list((run.output_directory / "LSV" / "raw_curves").glob("group_PB_10_raw_lsv.*"))

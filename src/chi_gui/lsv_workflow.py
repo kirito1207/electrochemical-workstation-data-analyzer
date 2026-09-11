@@ -668,6 +668,42 @@ def comparison_display_rows(result: LSVAnalysisResult) -> tuple[dict[str, object
     return tuple(grouped.values())
 
 
+def omnibus_display_rows(result: LSVAnalysisResult) -> tuple[dict[str, object], ...]:
+    status_labels = {
+        "ok": "已计算",
+        "not_applicable": "不适用",
+        "unavailable": "不可用",
+    }
+    return tuple(
+        {
+            "test": item.test,
+            "statistic": format_number(item.statistic),
+            "df1": format_number(item.df1),
+            "df2": format_number(item.df2),
+            "p": format_number(item.p_value),
+            "status": status_labels[item.status],
+            "notes": item.notes,
+        }
+        for item in result.omnibus_tests
+    )
+
+
+def omnibus_result_status(result: LSVAnalysisResult) -> str:
+    group_count = len(result.groups)
+    material_n = sum(item.manifest.electrode_type == "Material" for item in result.files)
+    if group_count == 1:
+        return "仅1个 Material Group，整体多组检验不适用。"
+    if group_count == 2:
+        return "当前为2个 Material Groups，请使用用户定义组间比较；整体多组检验需 ≥3 Groups。"
+    return (
+        "整体多组比较使用全部已确认的 Material Groups。"
+        f"Groups：{group_count}；Material n：{material_n}；"
+        f"正式指标：{result.settings.analysis_metric}；"
+        f"分析电位：{result.settings.target_potential_V:.6g} V。"
+        "p值检验整体条件效应；具体组间差异请结合用户定义组间比较。"
+    )
+
+
 def sign_qc_display_rows(result: LSVAnalysisResult) -> tuple[dict[str, object], ...]:
     return tuple(
         {
@@ -714,6 +750,8 @@ __all__ = [
     "execute_lsv_analysis",
     "format_number",
     "mad_result_status",
+    "omnibus_display_rows",
+    "omnibus_result_status",
     "outlier_display_rows",
     "result_summary_text",
     "sign_qc_display_rows",

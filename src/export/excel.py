@@ -12,7 +12,13 @@ from openpyxl.utils import get_column_letter
 
 from analysis.lsv_analysis import LSVAnalysisResult
 
-from .csv import _selected_rows, _statistics_rows, _summary_rows
+from .csv import (
+    STATISTICS_FIELDS,
+    _omnibus_rows,
+    _selected_rows,
+    _statistics_rows,
+    _summary_rows,
+)
 
 
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
@@ -161,8 +167,10 @@ def _append_table(sheet, headers: Sequence[str], rows: Iterable[Sequence[object]
         sheet.column_dimensions[get_column_letter(column)].width = width
 
 
-def _dict_table(sheet, rows: list[dict[str, object]]) -> None:
-    headers = tuple(rows[0]) if rows else ()
+def _dict_table(
+    sheet, rows: list[dict[str, object]], headers: Sequence[str] = ()
+) -> None:
+    headers = tuple(headers) or (tuple(rows[0]) if rows else ())
     _append_table(sheet, headers, ([row[key] for key in headers] for row in rows))
 
 
@@ -179,6 +187,8 @@ def export_analysis_workbook(result: LSVAnalysisResult, path: str | Path) -> Pat
         ("analysis_timestamp", result.settings.analysis_timestamp),
         ("primary_test", "Welch independent-samples t-test"),
         ("sensitivity_test", "Mann-Whitney U, two-sided"),
+        ("overall_primary_test", "One-way Welch ANOVA using all Material Groups"),
+        ("overall_sensitivity_test", "Kruskal-Wallis using all Material Groups"),
         (
             "multiple_comparison",
             "Holm adjustment only within explicitly declared primary families",
@@ -232,7 +242,12 @@ def export_analysis_workbook(result: LSVAnalysisResult, path: str | Path) -> Pat
     _dict_table(workbook.create_sheet("Experiment_Parameters"), parameter_rows)
     _dict_table(workbook.create_sheet("Selected_Potential_Data"), _selected_rows(result))
     _dict_table(workbook.create_sheet("Group_Summary"), _summary_rows(result))
-    _dict_table(workbook.create_sheet("Statistics"), _statistics_rows(result))
+    _dict_table(workbook.create_sheet("Omnibus statistics"), _omnibus_rows(result))
+    _dict_table(
+        workbook.create_sheet("Statistics"),
+        _statistics_rows(result),
+        STATISTICS_FIELDS,
+    )
 
     outlier_rows = [asdict(item) for item in result.outlier_flags]
     outlier_headers = (
@@ -264,7 +279,8 @@ def export_analysis_workbook(result: LSVAnalysisResult, path: str | Path) -> Pat
         sheet.page_setup.fitToWidth = 1
         sheet.page_setup.fitToHeight = 0
         sheet.sheet_properties.tabColor = "1F4E78" if sheet.title in {
-            "Analysis_Settings", "Current_Sign_QC", "Group_Summary", "Statistics"
+            "Analysis_Settings", "Current_Sign_QC", "Group_Summary",
+            "Omnibus statistics", "Statistics"
         } else "9DC3E6"
 
     workbook.save(output)

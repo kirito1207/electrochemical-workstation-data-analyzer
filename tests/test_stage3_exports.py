@@ -20,7 +20,7 @@ def test_csv_exports_include_traceable_rows_and_parsed_curves(tmp_path, syntheti
     assert all(row["source_sha256"] for row in rows)
     assert all("signed_current_A" in row and "response_magnitude_uA" in row for row in rows)
     assert len(list((tmp_path / "csv" / "parsed_lsv").glob("*.csv"))) == 42
-    assert len(files) == 49
+    assert len(files) == 50
 
 
 def test_excel_contains_all_required_sheets(tmp_path, synthetic_analysis_result):
@@ -34,6 +34,7 @@ def test_excel_contains_all_required_sheets(tmp_path, synthetic_analysis_result)
         "Experiment_Parameters",
         "Selected_Potential_Data",
         "Group_Summary",
+        "Omnibus statistics",
         "Statistics",
         "Outlier_Flags",
         "Exclusion_Log",
