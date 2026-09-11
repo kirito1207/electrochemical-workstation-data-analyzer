@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "chi760e-h2o2-analyzer"
+name = "electrochemical-workstation-data-analyzer"
 version = "0.1.0"
-description = "Strict, validated parsers for CHI760E LSV and amperometric i-t binary data."
+description = "Electrochemical workstation data analysis software with validated CHI760E LSV and i-t support, statistics, visualization, and GUI workflows."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

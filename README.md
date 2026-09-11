@@ -1,8 +1,14 @@
-# chi760e-h2o2-analyzer — Stage 5.2.1.1
+# Electrochemical Workstation Data Analyzer — Stage 5.2.1.1
 
 当前开发状态：**Stage 5.2.1.1（指定电位散点图 hover 命中热修复）**。
 
-本阶段提供严格校验的 CH Instruments CHI760E 二进制解析基础设施。parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
+电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
+
+This is a desktop-oriented electrochemical workstation data analysis project with validated CHI760E binary parsing and Generic LSV/i-t analysis infrastructure.
+
+仓库名称和顶层定位已经泛化，但这不表示 native binary parser 已支持所有厂家的电化学工作站。当前真实文件验证范围仍以 CHI760E 为主；未来架构可以扩展 CV、CA 和其他 technique，但必须先实现并验证各自的 technique-specific parser 与分析逻辑。
+
+parser 只读取原始数据，不进行平滑、基线校正、归一化、统计分析或绘图。
 
 ## 当前支持范围
 
