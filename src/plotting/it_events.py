@@ -3,12 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 from analysis.it_events import ITAnalysisMode
 
 from .common import (colors_for_groups, configure_group_ticks, group_figure_width,
                      legend_columns, new_figure, style_axes)
+from .font_config import configure_plotting_fonts
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +47,29 @@ def build_it_event_figure(result):
                           f"{item.sample_id}: {event.name}",
                           transform=axis.get_xaxis_transform(), rotation=90,
                           va="top", ha="right", fontsize=6, color=line.get_color())
+    if result.mode == ITAnalysisMode.CONTINUOUS and result.stability_settings is not None:
+        settings = result.stability_settings
+        analysis_ranges = tuple(dict.fromkeys(
+            (row.analysis_start_s, row.analysis_end_s) for row in result.stability_records
+        ))
+        for index, (start, end) in enumerate(analysis_ranges):
+            axis.axvspan(start, end, color="#4C78A8", alpha=0.07,
+                        label="Analysis range" if index == 0 else None)
+        if settings.early_start_s is not None and settings.early_end_s is not None:
+            axis.axvspan(settings.early_start_s, settings.early_end_s,
+                        color="#59A14F", alpha=0.13, label="Early window")
+        if settings.late_start_s is not None and settings.late_end_s is not None:
+            axis.axvspan(settings.late_start_s, settings.late_end_s,
+                        color="#F28E2B", alpha=0.13, label="Late window")
+        seen = set()
+        for record in result.stability_records:
+            for interval in record.interruptions:
+                signature = (interval.start_s, interval.end_s, interval.interruption_type)
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                axis.axvspan(interval.start_s, interval.end_s, color="#C44E52", alpha=0.18,
+                            hatch="//", label="Invalid / interruption" if len(seen) == 1 else None)
     if len(timeline_signatures) <= 1:
         shared_events = result.files[0].timeline.events if result.files else result.timeline.events
         for event in shared_events:
@@ -60,6 +85,66 @@ def build_it_event_figure(result):
     axis.set(xlabel="Time / s", ylabel="Current / µA", title=title)
     if result.files: axis.legend(ncol=legend_columns(len(result.files)))
     style_axes(axis)
+    return figure
+
+
+def _continuous_metric_figure(result, *, attr, ylabel, title, reference, scale=1.0):
+    groups = tuple(dict.fromkeys(row.group for row in result.stability_records))
+    figure, axis = new_figure(width=group_figure_width(groups), height=4.6)
+    colors = colors_for_groups(groups)
+    for group_index, group in enumerate(groups):
+        rows = [row for row in result.stability_records
+                if row.group == group and getattr(row, attr) is not None]
+        values = np.asarray([getattr(row, attr) * scale for row in rows], dtype=float)
+        jitter = np.linspace(-0.07, 0.07, len(values)) if len(values) > 1 else np.zeros(len(values))
+        axis.scatter(group_index + jitter, values, s=28, alpha=.82, color=colors[group])
+        if values.size:
+            sd = float(np.std(values, ddof=1)) if values.size > 1 else math.nan
+            axis.errorbar(group_index, float(np.mean(values)),
+                          yerr=None if math.isnan(sd) else sd, fmt="D", ms=5,
+                          capsize=3, color=colors[group], zorder=4)
+    configure_group_ticks(axis, groups)
+    axis.axhline(reference, color="#666666", linewidth=.9, linestyle="--")
+    axis.set(xlabel="Group", ylabel=ylabel, title=title)
+    style_axes(axis)
+    return figure
+
+
+def build_it_retention_figure(result):
+    return _continuous_metric_figure(
+        result, attr="retention_magnitude_pct", ylabel="Retention / %",
+        title="Continuous stability: individual Retention and mean ± SD", reference=100.0,
+    )
+
+
+def build_it_drift_figure(result):
+    return _continuous_metric_figure(
+        result, attr="drift_slope_A_per_s", scale=6e7, ylabel="Drift / µA/min",
+        title="Continuous stability: individual OLS drift and mean ± SD", reference=0.0,
+    )
+
+
+def build_it_group_stability_figure(result):
+    configure_plotting_fonts()
+    groups = tuple(dict.fromkeys(row.group for row in result.stability_records))
+    figure, axes = plt.subplots(1, 2, figsize=(group_figure_width(groups, base=8.0), 4.4),
+                               constrained_layout=True)
+    colors = colors_for_groups(groups)
+    definitions = (("retention_magnitude_pct", 1.0, "Retention / %", 100.0),
+                   ("drift_slope_A_per_s", 6e7, "Drift / µA/min", 0.0))
+    for axis, (attr, scale, ylabel, reference) in zip(axes, definitions):
+        for index, group in enumerate(groups):
+            values = np.asarray([getattr(row, attr) * scale for row in result.stability_records
+                                 if row.group == group and getattr(row, attr) is not None], dtype=float)
+            if values.size:
+                sd = float(np.std(values, ddof=1)) if values.size > 1 else math.nan
+                axis.errorbar(index, float(np.mean(values)), yerr=None if math.isnan(sd) else sd,
+                              fmt="D", capsize=3, color=colors[group])
+        configure_group_ticks(axis, groups)
+        axis.axhline(reference, color="#666666", linewidth=.9, linestyle="--")
+        axis.set(xlabel="Group", ylabel=ylabel)
+        style_axes(axis)
+    figure.suptitle("Group stability summary (mean ± sample SD)")
     return figure
 
 
@@ -143,4 +228,5 @@ def build_it_calibration_figure(result):
     return figure
 
 __all__ = ["ITResponseScatterPoint", "ITResponseScatterSeries", "build_it_calibration_figure",
-           "build_it_event_figure", "build_it_response_figure"]
+           "build_it_drift_figure", "build_it_event_figure", "build_it_group_stability_figure",
+           "build_it_response_figure", "build_it_retention_figure"]

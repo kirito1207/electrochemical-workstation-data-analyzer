@@ -5,12 +5,16 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import Enum
-from typing import Literal, Sequence
+from typing import TYPE_CHECKING, Literal, Sequence
 
 import numpy as np
 from scipy import stats
 
 from chi_parser import ITData
+
+if TYPE_CHECKING:
+    from .it_stability import (ContinuousGroupSummary, ContinuousSegmentResult,
+                               ContinuousStabilityResult, ContinuousStabilitySettings)
 
 
 class EventAnalysisError(ValueError):
@@ -226,6 +230,10 @@ class ITEventBatchResult:
     calibration_selection: CalibrationSelection | None
     mode: ITAnalysisMode = ITAnalysisMode.EVENT
     continuous_summaries: tuple[ITContinuousSummary, ...] = ()
+    stability_records: tuple[ContinuousStabilityResult, ...] = ()
+    stability_segments: tuple[ContinuousSegmentResult, ...] = ()
+    stability_group_summaries: tuple[ContinuousGroupSummary, ...] = ()
+    stability_settings: ContinuousStabilitySettings | None = None
 
 
 def summarize_it_continuous_record(data: ITData, *, sample_id: str,

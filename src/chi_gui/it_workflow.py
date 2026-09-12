@@ -15,9 +15,12 @@ from analysis.it_events import (
     ITEventBatchResult,
     ITEventInput,
     PlateauPolicy,
-    analyze_it_continuous_batch,
     analyze_it_events,
     summarize_event_responses,
+)
+from analysis.it_stability import (
+    ContinuousInterruption, ContinuousStabilitySettings, InterruptionType,
+    analyze_it_continuous_batch, validate_interruption_set,
 )
 from chi_parser import ITData
 
@@ -66,6 +69,8 @@ class ITAnalysisRequest:
     calibration_selection: CalibrationSelection | None
     signature: tuple[object, ...]
     mode: ITAnalysisMode
+    continuous_settings: ContinuousStabilitySettings
+    interruptions_by_sample: dict[str, tuple[ContinuousInterruption, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +98,9 @@ class ITWorkflowState:
     calibration_event_ids: tuple[str, ...] = ()
     calibration_x_label: str = ""
     calibration_x_unit: str = ""
+    continuous_settings: ContinuousStabilitySettings = field(default_factory=ContinuousStabilitySettings)
+    continuous_interruptions: dict[str, list[ContinuousInterruption]] = field(default_factory=dict)
+    current_interruption_record_key: str | None = None
     analysis_result: ITEventBatchResult | None = None
     result_signature: tuple[object, ...] | None = None
     result_stale: bool = False
@@ -102,6 +110,7 @@ class ITWorkflowState:
     feedback: WorkflowFeedback = field(default_factory=WorkflowFeedback)
     validation_errors: tuple[str, ...] = ()
     _next_event_number: int = 1
+    _next_interruption_number: int = 1
 
     def set_feedback(self, level: str, title: str, details: Iterable[str] = ()) -> None:
         self.feedback = WorkflowFeedback(level, title, tuple(details))
@@ -174,6 +183,9 @@ class ITWorkflowState:
                          for key, override in self.sample_timeline_overrides.items())),
             self.tail_fraction, self.analysis_metric, self.calibration_enabled,
             self.calibration_event_ids, self.calibration_x_label, self.calibration_x_unit,
+            self.continuous_settings,
+            tuple(sorted((key, tuple(values))
+                         for key, values in self.continuous_interruptions.items())),
         )
 
     @property
@@ -218,8 +230,14 @@ class ITWorkflowState:
         self.sample_timeline_overrides = {
             key: override for key, override in self.sample_timeline_overrides.items() if key in keys
         }
+        self.continuous_interruptions = {
+            key: values for key, values in self.continuous_interruptions.items() if key in keys
+        }
         if self.current_timeline_record_key not in keys:
             self.current_timeline_record_key = None
+        if self.current_interruption_record_key not in keys:
+            self.current_interruption_record_key = next((row.record_key for row in self.metadata_rows
+                                                         if row.include), None)
         if changed:
             self.metadata_confirmed = False
             if self.analysis_result is not None:
@@ -235,6 +253,10 @@ class ITWorkflowState:
         setattr(row, field_name, bool(value) if field_name == "include" else str(value))
         if not row.include and self.current_timeline_record_key == record_key:
             self.current_timeline_record_key = None
+        if not row.include and self.current_interruption_record_key == record_key:
+            self.current_interruption_record_key = next(
+                (item.record_key for item in self.metadata_rows if item.include), None
+            )
         self._changed(metadata=True)
 
     def batch_update_metadata(self, record_keys: Iterable[str],
@@ -263,6 +285,11 @@ class ITWorkflowState:
         if self.current_timeline_record_key in keys and not existing[
                 self.current_timeline_record_key].include:
             self.current_timeline_record_key = None
+        if (self.current_interruption_record_key in keys
+                and not existing[self.current_interruption_record_key].include):
+            self.current_interruption_record_key = next(
+                (row.record_key for row in self.metadata_rows if row.include), None
+            )
         self._changed(metadata=True)
         self.set_feedback("info", "样本信息已修改，请重新确认并运行分析。")
 
@@ -424,6 +451,71 @@ class ITWorkflowState:
              self.calibration_x_label, self.calibration_x_unit) = replacement
             self._changed()
 
+    @property
+    def interruption_record_choices(self) -> tuple[tuple[str, str], ...]:
+        return tuple((row.record_key, f"{row.sample_id.strip() or row.file_name} — {row.file_name}")
+                     for row in self.metadata_rows if row.include)
+
+    @property
+    def current_interruptions(self) -> tuple[ContinuousInterruption, ...]:
+        if self.current_interruption_record_key is None:
+            return ()
+        return tuple(self.continuous_interruptions.get(self.current_interruption_record_key, ()))
+
+    def select_interruption_record(self, record_key: str | None) -> None:
+        valid = {row.record_key for row in self.metadata_rows if row.include}
+        self.current_interruption_record_key = record_key if record_key in valid else None
+
+    def set_continuous_settings(self, settings: ContinuousStabilitySettings) -> None:
+        settings.validate()
+        if settings != self.continuous_settings:
+            self.continuous_settings = settings
+            self._changed()
+
+    def _new_interruption_id(self) -> str:
+        used = {row.interval_id for values in self.continuous_interruptions.values() for row in values}
+        while f"interruption_{self._next_interruption_number}" in used:
+            self._next_interruption_number += 1
+        value = f"interruption_{self._next_interruption_number}"
+        self._next_interruption_number += 1
+        return value
+
+    def add_interruption(self, record_key: str, *, start_s: float, end_s: float,
+                         interruption_type: InterruptionType | str = InterruptionType.OTHER,
+                         reason: str = "") -> ContinuousInterruption:
+        self.metadata_row(record_key)
+        row = ContinuousInterruption(self._new_interruption_id(), float(start_s), float(end_s),
+                                     InterruptionType(interruption_type), reason.strip())
+        replacement = validate_interruption_set((*self.continuous_interruptions.get(record_key, ()), row))
+        self.continuous_interruptions[record_key] = list(replacement)
+        self.current_interruption_record_key = record_key
+        self._changed()
+        return row
+
+    def edit_interruption(self, record_key: str, interval_id: str, *, start_s: float,
+                          end_s: float, interruption_type: InterruptionType | str,
+                          reason: str = "") -> ContinuousInterruption:
+        values = self.continuous_interruptions.get(record_key, [])
+        if not any(row.interval_id == interval_id for row in values):
+            raise ValueError("找不到要编辑的无效/中断区间。")
+        replacement_row = ContinuousInterruption(interval_id, float(start_s), float(end_s),
+                                                 InterruptionType(interruption_type), reason.strip())
+        replacement = validate_interruption_set(tuple(
+            replacement_row if row.interval_id == interval_id else row for row in values
+        ))
+        self.continuous_interruptions[record_key] = list(replacement)
+        self._changed()
+        return replacement_row
+
+    def delete_interruptions(self, record_key: str, interval_ids: Iterable[str]) -> None:
+        removed = set(interval_ids)
+        if not removed:
+            return
+        values = self.continuous_interruptions.get(record_key, [])
+        self.continuous_interruptions[record_key] = [row for row in values
+                                                     if row.interval_id not in removed]
+        self._changed()
+
     def build_request(self, records: Iterable[FileRecord]) -> ITAnalysisRequest:
         errors = list(validate_it_workflow(self, records))
         if errors:
@@ -440,10 +532,15 @@ class ITWorkflowState:
                                             self.calibration_x_label,
                                             self.calibration_x_unit)
                        if self.calibration_enabled and mode == ITAnalysisMode.EVENT else None)
+        interruption_map = {
+            row.sample_id.strip(): tuple(self.continuous_interruptions.get(row.record_key, ()))
+            for row in included
+        }
         return ITAnalysisRequest(tuple(row.record_key for row in included), inputs, self.timeline,
                                  timelines, self.analysis_metric,
                                  PlateauPolicy(fraction=self.tail_fraction), calibration,
-                                 self.current_signature(), mode)
+                                 self.current_signature(), mode, self.continuous_settings,
+                                 interruption_map)
 
     def accept_result(self, request: ITAnalysisRequest, result: ITEventBatchResult) -> None:
         self.analysis_result = result
@@ -499,7 +596,10 @@ def validate_it_workflow(workflow: ITWorkflowState, records: Iterable[FileRecord
 
 def execute_it_analysis(request: ITAnalysisRequest) -> ITEventBatchResult:
     if request.mode == ITAnalysisMode.CONTINUOUS:
-        return analyze_it_continuous_batch(request.inputs, metric=request.metric)
+        return analyze_it_continuous_batch(
+            request.inputs, metric=request.metric, settings=request.continuous_settings,
+            interruptions_by_sample=request.interruptions_by_sample,
+        )
     files = tuple(
         analyze_it_events(item.data, timeline, sample_id=item.sample_id, group=item.group,
                           metric=request.metric, policy=request.policy,
@@ -544,6 +644,18 @@ def calibration_display_rows(result: ITEventBatchResult) -> tuple[dict[str, obje
 
 
 def continuous_display_rows(result: ITEventBatchResult) -> tuple[dict[str, object], ...]:
+    if result.stability_records:
+        return tuple({
+            "sample_id": row.sample_id, "group": row.group,
+            "early_mean_uA": None if row.early_mean_A is None else row.early_mean_A * 1e6,
+            "late_mean_uA": None if row.late_mean_A is None else row.late_mean_A * 1e6,
+            "delta_current_uA": None if row.delta_current_A is None else row.delta_current_A * 1e6,
+            "retention_percent": row.retention_magnitude_pct,
+            "drift_uA_per_min": None if row.drift_slope_A_per_s is None else row.drift_slope_A_per_s * 6e7,
+            "r_squared": row.drift_r_squared,
+            "analysis_range": f"{row.analysis_start_s:g}–{row.analysis_end_s:g}",
+            "qc": row.qc_status,
+        } for row in result.stability_records)
     return tuple({
         "sample_id": row.sample_id, "group": row.group, "duration_s": row.duration_s,
         "mean_current_uA": row.mean_current_uA, "sd_current_uA": row.sd_current_uA,
@@ -553,17 +665,64 @@ def continuous_display_rows(result: ITEventBatchResult) -> tuple[dict[str, objec
     } for row in result.continuous_summaries)
 
 
+def continuous_segment_display_rows(result: ITEventBatchResult) -> tuple[dict[str, object], ...]:
+    output = [{
+        "sample_id": row.sample_id, "segment": row.segment_id,
+        "start_s": row.start_s, "end_s": row.end_s, "duration_s": row.duration_s,
+        "n": row.n_points,
+        "mean_uA": None if row.mean_A is None else row.mean_A * 1e6,
+        "sd_uA": None if row.sd_A is None else row.sd_A * 1e6,
+        "drift_uA_per_min": None if row.slope_A_per_s is None else row.slope_A_per_s * 6e7,
+        "r_squared": row.r_squared, "status": row.status,
+    } for row in result.stability_segments]
+    for record in result.stability_records:
+        for row in record.interruptions:
+            output.append({
+                "sample_id": record.sample_id, "segment": row.interval_id,
+                "start_s": row.start_s, "end_s": row.end_s,
+                "duration_s": row.end_s - row.start_s, "n": "—",
+                "mean_uA": "—", "sd_uA": "—", "drift_uA_per_min": "—",
+                "r_squared": "—",
+                "status": f"excluded: {row.interruption_type.value}; {row.reason}".rstrip("; "),
+            })
+    return tuple(output)
+
+
+def continuous_group_display_rows(result: ITEventBatchResult) -> tuple[dict[str, object], ...]:
+    output = []
+    for row in result.stability_group_summaries:
+        scale = 1e6 if row.unit == "A" else 6e7 if row.unit == "A/s" else 1.0
+        unit = "µA" if row.unit == "A" else "µA/min" if row.unit == "A/s" else row.unit
+        output.append({
+            "group": row.group, "metric": row.metric, "unit": unit, "n": row.n,
+            "mean": row.mean * scale, "sd": row.sd * scale, "sem": row.sem * scale,
+            "cv_percent": row.cv_percent, "median": row.median * scale,
+            "minimum": row.minimum * scale, "maximum": row.maximum * scale,
+        })
+    return tuple(output)
+
+
 def workflow_status_lines(workflow: ITWorkflowState) -> tuple[str, ...]:
     if workflow.analysis_mode == ITAnalysisMode.CONTINUOUS:
         timeline_status = "未定义（Continuous mode）"
+        settings = workflow.continuous_settings
+        analysis_label = ("各 record 实际范围" if settings.analysis_start_s is None else
+                          f"{settings.analysis_start_s:g}–{settings.analysis_end_s:g} s")
+        early_label = ("未设置" if settings.early_start_s is None else
+                       f"{settings.early_start_s:g}–{settings.early_end_s:g} s")
+        late_label = ("未设置" if settings.late_start_s is None else
+                      f"{settings.late_start_s:g}–{settings.late_end_s:g} s")
+        response_status = (f"Stability：Analysis {analysis_label}；Early {early_label}；"
+                           f"Late {late_label}；中断 {sum(map(len, workflow.continuous_interruptions.values()))}")
     else:
         event_count = len(workflow.events)
         timeline_status = (f"已确认 {event_count} Events" if workflow.timeline_confirmed
                            else "未确认")
+        response_status = f"响应设置：尾段 {workflow.tail_fraction:.0%}；{workflow.analysis_metric}"
     return (
         f"① 样本信息：{'已确认' if workflow.metadata_confirmed else '未确认'}",
         f"② Event Timeline：{timeline_status}；专用 {len(workflow.sample_timeline_overrides)}",
-        f"③ 响应设置：尾段 {workflow.tail_fraction:.0%}；{workflow.analysis_metric}",
+        f"③ {response_status}",
         f"④ Calibration：{'开启' if workflow.calibration_enabled else '关闭'}",
         f"⑤ 正式分析：{workflow.result_status}",
     )
@@ -583,5 +742,6 @@ def result_summary_text(result: ITEventBatchResult) -> str:
 __all__ = ["ITAnalysisCompleted", "ITAnalysisRequest", "ITMetadataBatchEdit",
            "ITMetadataDraftRow", "ITWorkflowState",
            "SampleTimelineOverride", "calibration_display_rows", "execute_it_analysis",
-           "continuous_display_rows", "response_display_rows", "result_summary_text", "summary_display_rows",
+           "continuous_display_rows", "continuous_group_display_rows",
+           "continuous_segment_display_rows", "response_display_rows", "result_summary_text", "summary_display_rows",
            "validate_it_workflow", "workflow_status_lines"]

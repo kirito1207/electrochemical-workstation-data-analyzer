@@ -94,6 +94,13 @@ from .it_events import (
     define_response_windows, extract_window_statistics, fit_event_calibration,
     summarize_event_responses, summarize_it_continuous_record,
 )
+from .it_stability import (
+    ContinuousGroupSummary, ContinuousInterruption, ContinuousSegmentResult,
+    ContinuousStabilityResult, ContinuousStabilitySettings, InterruptionType,
+    RETENTION_REFERENCE_EPSILON_A, analyze_continuous_record,
+    analyze_it_continuous_batch, summarize_continuous_groups,
+    validate_interruption_set,
+)
 
 __all__ = [
     "AnalysisSettings",
@@ -170,4 +177,11 @@ __all__ += [
     "analyze_it_continuous_batch", "analyze_it_event_batch", "analyze_it_events", "calculate_event_responses",
     "define_response_windows", "extract_window_statistics", "fit_event_calibration",
     "summarize_event_responses", "summarize_it_continuous_record",
+]
+
+__all__ += [
+    "ContinuousGroupSummary", "ContinuousInterruption", "ContinuousSegmentResult",
+    "ContinuousStabilityResult", "ContinuousStabilitySettings", "InterruptionType",
+    "RETENTION_REFERENCE_EPSILON_A", "analyze_continuous_record",
+    "summarize_continuous_groups", "validate_interruption_set",
 ]

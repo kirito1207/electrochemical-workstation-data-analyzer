@@ -12,13 +12,18 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from analysis.it_events import ITAnalysisMode
+from analysis.it_stability import (ContinuousStabilitySettings, InterruptionType)
 from chi_gui.it_workflow import (ITMetadataBatchEdit, ITWorkflowState,
                                  calibration_display_rows, continuous_display_rows,
+                                 continuous_group_display_rows,
+                                 continuous_segment_display_rows,
                                  response_display_rows, result_summary_text,
                                  summary_display_rows, workflow_status_lines)
 from chi_gui.metadata_selection import MetadataSelectionModel
 from plotting.it_events import (ITResponseScatterPoint, build_it_calibration_figure,
-                                build_it_event_figure, build_it_response_figure)
+                                build_it_drift_figure, build_it_event_figure,
+                                build_it_group_stability_figure,
+                                build_it_response_figure, build_it_retention_figure)
 
 
 IT_HOVER_RADIUS_PX = 10.0
@@ -28,7 +33,8 @@ FOOTER_INITIAL_TEXT_WRAP_PX = 430
 
 def available_it_result_plots(result) -> tuple[str, ...]:
     if result is not None and result.mode == ITAnalysisMode.CONTINUOUS:
-        return ("Raw i-t / Continuous",)
+        return ("Raw / Stability Timeline", "Retention by Group",
+                "Drift by Group", "Group Stability Summary")
     plots = ("Raw + Events", "Event Response")
     has_calibration = result is not None and any(item.calibration is not None for item in result.files)
     return plots + (("Calibration",) if has_calibration else ())
@@ -92,6 +98,16 @@ def it_group_choices(rows) -> tuple[str, ...]:
     """Return stable, user-defined Group labels for the editable batch combobox."""
 
     return tuple(dict.fromkeys(row.group.strip() for row in rows if row.group.strip()))
+
+
+INTERRUPTION_LABELS = {
+    InterruptionType.ACQUISITION_ERROR: "采集错误",
+    InterruptionType.MANUAL_PAUSE: "手动暂停",
+    InterruptionType.ELECTRODE_ADJUSTMENT: "电极调整",
+    InterruptionType.CONNECTION_ISSUE: "连接问题",
+    InterruptionType.OTHER: "其他",
+}
+INTERRUPTION_TYPES_BY_LABEL = {label: value for value, label in INTERRUPTION_LABELS.items()}
 
 
 class ITSettingsPanel(ttk.Frame):
@@ -188,7 +204,51 @@ class ITSettingsPanel(ttk.Frame):
         ttk.Button(event_frame, text="确认 Timeline", command=on_confirm_timeline).grid(row=2, column=5, sticky="e")
         panes.add(event_frame, weight=3)
 
-        settings = ttk.LabelFrame(panes, text="③ 响应设置与 ④ 可选 Calibration")
+        continuous = ttk.LabelFrame(panes, text="③ Continuous Stability（仅 No-Event mode）")
+        continuous.columnconfigure(4, weight=1)
+        self.analysis_start = tk.StringVar(); self.analysis_end = tk.StringVar()
+        self.early_start = tk.StringVar(); self.early_end = tk.StringVar()
+        self.late_start = tk.StringVar(); self.late_end = tk.StringVar()
+        fields = (("Analysis range / s", self.analysis_start, self.analysis_end),
+                  ("Early window / s", self.early_start, self.early_end),
+                  ("Late window / s", self.late_start, self.late_end))
+        self.continuous_entries = []
+        for index, (label, start_variable, end_variable) in enumerate(fields):
+            ttk.Label(continuous, text=label).grid(row=index, column=0, sticky="e", padx=(3, 3))
+            start_entry = ttk.Entry(continuous, textvariable=start_variable, width=10)
+            start_entry.grid(row=index, column=1, sticky="w")
+            ttk.Label(continuous, text="→").grid(row=index, column=2, padx=3)
+            end_entry = ttk.Entry(continuous, textvariable=end_variable, width=10)
+            end_entry.grid(row=index, column=3, sticky="w")
+            self.continuous_entries.extend((start_entry, end_entry))
+        self.continuous_apply = ttk.Button(continuous, text="应用窗口", command=self._set_continuous)
+        self.continuous_apply.grid(row=0, column=5, rowspan=3, padx=8)
+        ttk.Label(continuous, text="Analysis 留空 = 每条 record 实际起点至终点；Early/Late 必须成对明确设置。Retention=|Late mean|/|Early mean|×100%；Drift 显示 µA/min。",
+                  foreground="#555555", wraplength=800).grid(row=3, column=0, columnspan=7, sticky="w", pady=2)
+        interruption_bar = ttk.Frame(continuous); interruption_bar.grid(row=4, column=0, columnspan=7, sticky="ew")
+        ttk.Label(interruption_bar, text="无效/中断区间所属 record：").pack(side="left")
+        self.interruption_record = tk.StringVar()
+        self.interruption_record_combo = ttk.Combobox(interruption_bar, textvariable=self.interruption_record,
+                                                       state="readonly", width=36)
+        self.interruption_record_combo.pack(side="left")
+        self.interruption_record_combo.bind("<<ComboboxSelected>>", self._select_interruption_record)
+        self._interruption_record_keys = {}
+        self.interruptions = ttk.Treeview(continuous, columns=("start", "end", "type", "reason"),
+                                          show="headings", height=3)
+        for key, label, width in (("start", "Start / s", 90), ("end", "End / s", 90),
+                                  ("type", "Type", 110), ("reason", "Reason / Notes", 300)):
+            self.interruptions.heading(key, text=label); self.interruptions.column(key, width=width, stretch=key == "reason")
+        self.interruptions.grid(row=5, column=0, columnspan=5, sticky="nsew", pady=2)
+        self.interruptions.bind("<Double-1>", lambda _event: self._edit_interruption())
+        self.add_interruption_button = ttk.Button(continuous, text="添加区间", command=self._add_interruption)
+        self.add_interruption_button.grid(row=5, column=5, sticky="nw", padx=3)
+        self.edit_interruption_button = ttk.Button(continuous, text="编辑", command=self._edit_interruption)
+        self.edit_interruption_button.grid(row=5, column=6, sticky="nw")
+        self.delete_interruption_button = ttk.Button(continuous, text="删除", command=self._delete_interruptions)
+        self.delete_interruption_button.grid(row=6, column=6, sticky="nw")
+        panes.add(continuous, weight=2)
+
+        settings = ttk.LabelFrame(panes, text="④ Event 响应设置与 ⑤ 可选 Calibration")
         self.tail = tk.StringVar(value="0.20"); self.metric = tk.StringVar(value="signed")
         ttk.Label(settings, text="平台尾段比例 (0 < f ≤ 1)：").grid(row=0, column=0, sticky="w")
         ttk.Entry(settings, textvariable=self.tail, width=9).grid(row=0, column=1, sticky="w")
@@ -272,6 +332,34 @@ class ITSettingsPanel(ttk.Frame):
         for event, values in zip(state.current_events, event_display_rows(state.current_events)):
             self.events.insert("", "end", iid=event.event_id, values=values)
         self.tail.set(f"{state.tail_fraction:.6g}"); self.metric.set(state.analysis_metric)
+        continuous_settings = state.continuous_settings
+        for variable, value in (
+            (self.analysis_start, continuous_settings.analysis_start_s),
+            (self.analysis_end, continuous_settings.analysis_end_s),
+            (self.early_start, continuous_settings.early_start_s),
+            (self.early_end, continuous_settings.early_end_s),
+            (self.late_start, continuous_settings.late_start_s),
+            (self.late_end, continuous_settings.late_end_s),
+        ):
+            variable.set("" if value is None else f"{value:g}")
+        record_choices = state.interruption_record_choices
+        self._interruption_record_keys = {label: key for key, label in record_choices}
+        record_labels = tuple(label for _key, label in record_choices)
+        self.interruption_record_combo.configure(values=record_labels)
+        current_record_label = next((label for key, label in record_choices
+                                     if key == state.current_interruption_record_key), "")
+        self.interruption_record.set(current_record_label)
+        self.interruptions.delete(*self.interruptions.get_children())
+        for row in state.current_interruptions:
+            self.interruptions.insert("", "end", iid=row.interval_id,
+                                      values=(f"{row.start_s:g}", f"{row.end_s:g}",
+                                              INTERRUPTION_LABELS[row.interruption_type], row.reason))
+        continuous_state = "normal" if state.analysis_mode == ITAnalysisMode.CONTINUOUS else "disabled"
+        for widget in (*self.continuous_entries, self.continuous_apply,
+                       self.interruption_record_combo, self.add_interruption_button,
+                       self.edit_interruption_button, self.delete_interruption_button):
+            widget.configure(state=("readonly" if widget is self.interruption_record_combo and
+                                    continuous_state == "normal" else continuous_state))
         self.calibration_enabled.set(state.calibration_enabled); self.x_label.set(state.calibration_x_label); self.x_unit.set(state.calibration_x_unit)
         calibration_state = "disabled" if state.analysis_mode == ITAnalysisMode.CONTINUOUS else "normal"
         self.calibration_toggle.configure(state=calibration_state)
@@ -441,6 +529,69 @@ class ITSettingsPanel(ttk.Frame):
                     for index in self.calibration_events.curselection())
         self.on_change("calibration", self.calibration_enabled.get(), ids, self.x_label.get(), self.x_unit.get())
 
+    @staticmethod
+    def _optional_float(text):
+        return None if not text.strip() else float(text)
+
+    def _set_continuous(self):
+        try:
+            settings = ContinuousStabilitySettings(
+                self._optional_float(self.analysis_start.get()), self._optional_float(self.analysis_end.get()),
+                self._optional_float(self.early_start.get()), self._optional_float(self.early_end.get()),
+                self._optional_float(self.late_start.get()), self._optional_float(self.late_end.get()),
+            )
+            settings.validate()
+        except Exception as error:
+            if self._state:
+                self._state.set_feedback("warning", "Continuous 窗口未更新", (str(error),))
+                self.feedback.set(self._state.feedback.text)
+            return
+        self.on_change("continuous_settings", settings)
+
+    def _select_interruption_record(self, _event=None):
+        self.on_change("interruption_record", self._interruption_record_keys.get(self.interruption_record.get()))
+
+    def _interruption_values(self, old=None):
+        start = simpledialog.askstring("无效/中断区间", "Start / s：", initialvalue="" if old is None else str(old.start_s), parent=self)
+        if start is None: return None
+        end = simpledialog.askstring("无效/中断区间", "End / s：", initialvalue="" if old is None else str(old.end_s), parent=self)
+        if end is None: return None
+        initial_type = INTERRUPTION_LABELS[old.interruption_type] if old else INTERRUPTION_LABELS[InterruptionType.OTHER]
+        type_label = simpledialog.askstring("无效/中断区间", "Type（采集错误/手动暂停/电极调整/连接问题/其他）：", initialvalue=initial_type, parent=self)
+        if type_label is None: return None
+        reason = simpledialog.askstring("无效/中断区间", "Reason / Notes：", initialvalue="" if old is None else old.reason, parent=self)
+        if reason is None: return None
+        try:
+            normalized = type_label.strip()
+            interruption_type = INTERRUPTION_TYPES_BY_LABEL.get(normalized)
+            if interruption_type is None:
+                interruption_type = InterruptionType(normalized)
+            return float(start), float(end), interruption_type, reason
+        except (ValueError, KeyError):
+            if self._state: self._state.set_feedback("warning", "区间未保存", ("Start/End 必须是数值，Type 必须是有效类型。",))
+            return None
+
+    def _add_interruption(self):
+        if (self._state is None or self._state.analysis_mode != ITAnalysisMode.CONTINUOUS
+                or self._state.current_interruption_record_key is None): return
+        values = self._interruption_values()
+        if values is not None: self.on_change("add_interruption", self._state.current_interruption_record_key, *values)
+
+    def _edit_interruption(self):
+        if (self._state is None or self._state.analysis_mode != ITAnalysisMode.CONTINUOUS
+                or self._state.current_interruption_record_key is None
+                or not self.interruptions.selection()): return
+        interval_id = self.interruptions.selection()[0]
+        old = next(row for row in self._state.current_interruptions if row.interval_id == interval_id)
+        values = self._interruption_values(old)
+        if values is not None: self.on_change("edit_interruption", self._state.current_interruption_record_key, interval_id, *values)
+
+    def _delete_interruptions(self):
+        if (self._state is not None and self._state.analysis_mode == ITAnalysisMode.CONTINUOUS
+                and self._state.current_interruption_record_key is not None
+                and self.interruptions.selection()):
+            self.on_change("delete_interruptions", self._state.current_interruption_record_key, tuple(self.interruptions.selection()))
+
 
 class ITResultsPanel(ttk.Frame):
     def __init__(self, master):
@@ -448,15 +599,26 @@ class ITResultsPanel(ttk.Frame):
         self.status = tk.StringVar(value="尚未运行分析"); ttk.Label(self, textvariable=self.status).grid(row=0, column=0, sticky="w")
         self.notebook = ttk.Notebook(self); self.notebook.grid(row=1, column=0, sticky="nsew")
         definitions = {
-            "Continuous Summary": (("sample_id", "Sample ID"), ("group", "Group"),
-                                   ("duration_s", "Duration / s"),
-                                   ("mean_current_uA", "Mean current / µA"),
-                                   ("sd_current_uA", "SD / µA"),
-                                   ("min_current_uA", "Min / µA"),
-                                   ("max_current_uA", "Max / µA"),
-                                   ("first_time_s", "First time / s"),
-                                   ("last_time_s", "Last time / s"),
-                                   ("status", "Status")),
+            "Record Stability": (("sample_id", "Sample ID"), ("group", "Group"),
+                                   ("early_mean_uA", "Early mean / µA"),
+                                   ("late_mean_uA", "Late mean / µA"),
+                                   ("delta_current_uA", "ΔI / µA"),
+                                   ("retention_percent", "Retention / %"),
+                                   ("drift_uA_per_min", "Drift / µA/min"),
+                                   ("r_squared", "R²"),
+                                   ("analysis_range", "Analysis range / s"),
+                                   ("qc", "QC")),
+            "Segment / Interruption QC": (("sample_id", "Sample ID"), ("segment", "Segment"),
+                                            ("start_s", "Start / s"), ("end_s", "End / s"),
+                                            ("duration_s", "Duration / s"), ("n", "n"),
+                                            ("mean_uA", "Mean / µA"), ("sd_uA", "SD / µA"),
+                                            ("drift_uA_per_min", "Drift / µA/min"),
+                                            ("r_squared", "R²"), ("status", "Status")),
+            "Group Summary": (("group", "Group"), ("metric", "Metric"), ("unit", "Unit"),
+                              ("n", "n"), ("mean", "Mean"), ("sd", "SD"),
+                              ("sem", "SEM"), ("cv_percent", "CV%"),
+                              ("median", "Median"), ("minimum", "Min"),
+                              ("maximum", "Max")),
             "Event Response": (("sample_id", "Sample ID"), ("group", "Group"), ("event", "Event"), ("time_s", "Time/s"), ("baseline_mean", "Baseline mean"), ("response_mean", "Response mean"), ("signed_delta", "Signed ΔI"), ("magnitude", "Magnitude"), ("response_sd", "Response SD"), ("window_start", "Window start"), ("window_end", "Window end"), ("status", "Status")),
             "Event Summary": (("group", "Group"), ("event", "Event"), ("n", "n"), ("mean", "Mean"), ("sd", "SD"), ("sem", "SEM"), ("cv_percent", "CV%")),
             "Calibration": (("sample_id", "Sample ID"), ("metric", "Metric"), ("x_label", "x label"), ("x_unit", "x unit"), ("slope", "Slope"), ("intercept", "Intercept"), ("r_squared", "R²"), ("events", "Events"), ("method", "Method")),
@@ -468,17 +630,25 @@ class ITResultsPanel(ttk.Frame):
             ttk.Label(frame, textvariable=message, foreground="#355f7c").grid(row=0, column=0, sticky="w")
             tree = ttk.Treeview(frame, columns=tuple(key for key, _ in columns), show="headings")
             for key, label in columns: tree.heading(key, text=label); tree.column(key, width=105, stretch=True)
-            tree.grid(row=1, column=0, sticky="nsew"); ttk.Scrollbar(frame, orient="horizontal", command=tree.xview).grid(row=2, column=0, sticky="ew")
+            tree.grid(row=1, column=0, sticky="nsew")
+            yscroll = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
+            yscroll.grid(row=1, column=1, sticky="ns")
+            xscroll = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
+            xscroll.grid(row=2, column=0, sticky="ew")
+            tree.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
             self.notebook.add(frame, text=title); self.tables[title] = tree
             self.table_messages[title] = message; self.table_frames[title] = frame
         warnings_frame = ttk.Frame(self.notebook); warnings_frame.columnconfigure(0, weight=1); warnings_frame.rowconfigure(0, weight=1)
         self.warnings = tk.Text(warnings_frame, wrap="word"); self.warnings.grid(row=0, column=0, sticky="nsew")
         self.notebook.add(warnings_frame, text="Warnings / QC")
-        self.notebook.tab(self.table_frames["Continuous Summary"], state="hidden")
+        for title in ("Record Stability", "Segment / Interruption QC", "Group Summary"):
+            self.notebook.tab(self.table_frames[title], state="hidden")
 
     def render(self, state: ITWorkflowState):
         self.status.set(result_summary_text(state.analysis_result) if state.analysis_result else state.result_status)
-        getters = (("Continuous Summary", continuous_display_rows),
+        getters = (("Record Stability", continuous_display_rows),
+                   ("Segment / Interruption QC", continuous_segment_display_rows),
+                   ("Group Summary", continuous_group_display_rows),
                    ("Event Response", response_display_rows),
                    ("Event Summary", summary_display_rows),
                    ("Calibration", calibration_display_rows))
@@ -488,10 +658,14 @@ class ITResultsPanel(ttk.Frame):
                 for index, row in enumerate(getter(state.analysis_result)): tree.insert("", "end", iid=str(index), values=tuple(row.values()))
         continuous = bool(state.analysis_result and
                           state.analysis_result.mode == ITAnalysisMode.CONTINUOUS)
-        self.notebook.tab(self.table_frames["Continuous Summary"],
-                          state="normal" if continuous else "hidden")
+        for title in ("Record Stability", "Segment / Interruption QC", "Group Summary"):
+            self.notebook.tab(self.table_frames[title], state="normal" if continuous else "hidden")
         for title in ("Event Response", "Event Summary", "Calibration"):
             self.notebook.tab(self.table_frames[title], state="hidden" if continuous else "normal")
+        if continuous:
+            self.table_messages["Record Stability"].set("Current 显示为 µA；OLS drift 显示为 µA/min。")
+            self.table_messages["Segment / Interruption QC"].set("中断区间为 metadata；valid segment 不跨 gap 拟合。")
+            self.table_messages["Group Summary"].set("仅描述性汇总；不自动执行组间显著性检验。")
         self.table_messages["Calibration"].set(
             "" if state.analysis_result and any(item.calibration is not None for item in state.analysis_result.files)
             else "本次分析未启用 Calibration。" if state.analysis_result else "尚未运行分析"
@@ -499,7 +673,7 @@ class ITResultsPanel(ttk.Frame):
         self.warnings.delete("1.0", "end")
         if state.analysis_result:
             lines = [
-                "原始 i-t 不平滑；Continuous Summary 使用完整 record。"
+                "Raw arrays 保持完整且不平滑；窗口和中断仅作为正式分析 metadata。跨中断 overall drift 不报告。"
                 if continuous else
                 "原始 i-t 不平滑；Unavailable rows 保留；Calibration 仅使用用户显式选择的 Events。"
             ]
@@ -540,6 +714,9 @@ class ITResultPlotPanel(ttk.Frame):
         self.plot_type.set(kind)
         if kind == "Event Response": self.figure, self.series = build_it_response_figure(state.analysis_result, include_hover_metadata=True)
         elif kind == "Calibration": self.figure = build_it_calibration_figure(state.analysis_result)
+        elif kind == "Retention by Group": self.figure = build_it_retention_figure(state.analysis_result)
+        elif kind == "Drift by Group": self.figure = build_it_drift_figure(state.analysis_result)
+        elif kind == "Group Stability Summary": self.figure = build_it_group_stability_figure(state.analysis_result)
         else: self.figure = build_it_event_figure(state.analysis_result)
         self.canvas = FigureCanvasTkAgg(self.figure, master=self.host)
         if self.series:

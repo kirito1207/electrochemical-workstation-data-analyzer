@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.3.1.3.1
+# Electrochemical Workstation Data Analyzer — Stage 5.3.2
 
-当前开发状态：**Stage 5.3.1.3.1（Align i-t batch metadata controls with LSV interaction）**。
+当前开发状态：**Stage 5.3.2（Continuous i-t Stability Analysis + Interruption-aware QC）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -345,6 +345,14 @@ Generic i-t formal analysis now has two explicit result modes. If every included
 If the Default Timeline or an included sample override contains an Event, the batch enters **Event mode**. Defined but unconfirmed Timelines remain blocking; confirmed Timelines continue through the unchanged Stage 5.3 baseline, tail-fraction, signed ΔI, magnitude and explicit Calibration formulas. Empty effective Timelines in an Event batch may be explicitly confirmed and yield absent responses rather than being silently analyzed as continuous records.
 
 i-t metadata reuses the LSV `MetadataSelectionModel`: normal click, Ctrl-click, Shift range selection, Ctrl+A, drag range selection, Select All and Clear Selection follow the same interaction pattern. Stage 5.3.1.3.1 exposes the common actions directly below the table in LSV-like order: editable Group Combobox + “设置 Group”, “纳入”, “不纳入” and compact “设置备注”. Existing non-empty Group labels populate the Combobox while new labels remain editable; focusing it does not clear the Treeview selection. The former generic batch dialog was removed. Sample ID remains individually editable because assigning one value to several rows would violate uniqueness. Batch edits invalidate metadata confirmation, stale an existing result, and preserve sample Timeline overrides through stable `record_key` identity. Windows checks are listed in `docs/windows_stage53131_checklist.md`.
+
+## Stage 5.3.2 Continuous i-t Stability Analysis
+
+No-Event Continuous mode now supports a user-defined absolute analysis range plus explicit Early and Late windows. A blank analysis range resolves independently to each record's actual first and last sampled time; configured windows must be fully covered by a record and contain at least two real samples. The backend reports Early/Late mean and sample SD in A, signed `Late − Early`, magnitude change `|Late| − |Early|`, magnitude Retention `|Late mean| / |Early mean| × 100%`, and raw-current-versus-time OLS drift (slope A/s, intercept A, R² and n; GUI displays µA/min). `|Early mean| ≤ 1e-12 A` makes Retention unavailable with a warning instead of producing an unstable percentage. The full-range slope is only a descriptive linear summary; users choose the time range that answers their question.
+
+Each record may have its own explicitly entered invalid/interruption intervals with stable IDs, type and notes. These intervals are analysis metadata: the original arrays and full raw plot remain unchanged. An interval splits the selected range into `segment_1`, `segment_2`, …, each with duration, n, mean, sample SD and OLS slope/R². Overall drift is unavailable when the analysis range crosses a gap. Early/Late windows overlapping a gap are unavailable rather than recomputed after silently deleting samples. A Retention comparison across a gap is allowed when both windows are valid, but is marked `interrupted` and warned as a before/after ratio rather than uninterrupted operating stability. The software does not repair gaps, interpolate across them, smooth, baseline-correct, normalize, detrend, or fit exponential decay.
+
+Continuous results provide Record Stability, Segment / Interruption QC and Group Summary tables. Group summaries describe Retention, drift, Early current and Late current without automatic significance testing. Figures include the full Raw / Stability Timeline with window and interruption spans, Group Retention with a 100% reference, Group Drift with a zero reference, and a compact Group Stability Summary. Export now includes `continuous_stability.csv`, `continuous_segments.csv`, `continuous_group_summary.csv`, `interruptions.csv`, the compatibility `continuous_summary.csv`, and all continuous figures. Event mode formulas and Calibration remain unchanged. The LSV metadata batch bar also gains selected-row “纳入/不纳入” actions without changing Group, Electrode Type, selected-potential analysis, omnibus tests or pairwise statistics. Windows checks are listed in `docs/windows_stage532_checklist.md`.
 
 ## 安装与测试
 

@@ -159,16 +159,16 @@ def test_continuous_summary_uses_complete_record_values(synthetic_it_data):
     assert row.max_current_uA == pytest.approx(np.max(current_uA))
     assert row.first_time_s == synthetic_it_data.time_s[0]
     assert row.last_time_s == synthetic_it_data.time_s[-1]
-    assert tuple(continuous_display_rows(result)[0]) == (
-        "sample_id", "group", "duration_s", "mean_current_uA", "sd_current_uA",
-        "min_current_uA", "max_current_uA", "first_time_s", "last_time_s", "status",
-    )
+    assert result.stability_records[0].record_start_s == synthetic_it_data.time_s[0]
 
 
 def test_continuous_plot_has_full_records_and_no_event_markers(synthetic_it_data):
     workflow, records = _metadata_ready(synthetic_it_data, 3)
     result = execute_it_analysis(workflow.build_request(records))
-    assert available_it_result_plots(result) == ("Raw i-t / Continuous",)
+    assert available_it_result_plots(result) == (
+        "Raw / Stability Timeline", "Retention by Group",
+        "Drift by Group", "Group Stability Summary",
+    )
     figure = build_it_event_figure(result)
     try:
         assert len(figure.axes[0].lines) == 3
@@ -178,11 +178,13 @@ def test_continuous_plot_has_full_records_and_no_event_markers(synthetic_it_data
         plt.close(figure)
 
 
-def test_continuous_export_has_summary_and_raw_figure_only(tmp_path, synthetic_it_data):
+def test_continuous_export_has_stability_bundle_and_no_event_files(tmp_path, synthetic_it_data):
     workflow, records = _metadata_ready(synthetic_it_data, 2)
     run = export_it_result(execute_it_analysis(workflow.build_request(records)), tmp_path)
     names = {path.name for path in run.generated_files}
     assert "continuous_summary.csv" in names
+    assert {"continuous_stability.csv", "continuous_segments.csv",
+            "continuous_group_summary.csv", "interruptions.csv"} <= names
     assert not names.intersection({"events.csv", "event_responses.csv", "response_windows.csv",
                                    "event_summary.csv", "calibration.csv"})
     assert any(path.stem == "raw_continuous" for path in run.generated_files)
@@ -266,7 +268,7 @@ def test_continuous_status_results_and_footer_regressions_are_explicit():
     assert 'text="开始正式 i-t 分析"' in settings_source
 
 
-def test_stage5313_does_not_add_advanced_kinetics_or_lsv_science():
+def test_stage5313_event_core_still_does_not_add_advanced_kinetics_or_lsv_science():
     text = Path("src/analysis/it_events.py").read_text(encoding="utf-8").lower()
     for token in ("retention", "drift slope", "t90", "auc", "recovery", "detrend"):
         assert token not in text

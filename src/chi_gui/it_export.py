@@ -12,7 +12,8 @@ from analysis.it_events import ITAnalysisMode, ITEventBatchResult
 from export.figures import save_figure_formats
 from export.it_events import export_it_event_csv_bundle
 from plotting.it_events import (build_it_calibration_figure, build_it_event_figure,
-                                build_it_response_figure)
+                                build_it_drift_figure, build_it_group_stability_figure,
+                                build_it_response_figure, build_it_retention_figure)
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,6 +41,10 @@ def export_it_result(result: ITEventBatchResult, output_base: str | Path) -> ITE
     generated = list(export_it_event_csv_bundle(result, output / "i-t" / "csv"))
     figures = (("raw_continuous" if result.mode == ITAnalysisMode.CONTINUOUS
                 else "raw_with_events", build_it_event_figure(result)),)
+    if result.mode == ITAnalysisMode.CONTINUOUS:
+        figures += (("retention_by_group", build_it_retention_figure(result)),
+                    ("drift_by_group", build_it_drift_figure(result)),
+                    ("group_stability_summary", build_it_group_stability_figure(result)))
     if result.mode == ITAnalysisMode.EVENT:
         figures += (("event_responses", build_it_response_figure(result)),)
     if (result.mode == ITAnalysisMode.EVENT

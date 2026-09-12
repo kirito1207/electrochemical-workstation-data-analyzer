@@ -878,6 +878,17 @@ class MainWindow:
             elif action == "response":
                 workflow.set_tail_fraction(values[0]); workflow.set_metric(values[1])
             elif action == "calibration": workflow.set_calibration(*values)
+            elif action == "continuous_settings": workflow.set_continuous_settings(values[0])
+            elif action == "interruption_record": workflow.select_interruption_record(values[0])
+            elif action == "add_interruption":
+                record_key, start_s, end_s, interruption_type, reason = values
+                workflow.add_interruption(record_key, start_s=start_s, end_s=end_s,
+                                          interruption_type=interruption_type, reason=reason)
+            elif action == "edit_interruption":
+                record_key, interval_id, start_s, end_s, interruption_type, reason = values
+                workflow.edit_interruption(record_key, interval_id, start_s=start_s, end_s=end_s,
+                                           interruption_type=interruption_type, reason=reason)
+            elif action == "delete_interruptions": workflow.delete_interruptions(*values)
         except Exception as error:
             workflow.set_feedback("warning", "i-t 设置未更新", (str(error),))
             self._log(f"i-t 设置未更新：{error}")

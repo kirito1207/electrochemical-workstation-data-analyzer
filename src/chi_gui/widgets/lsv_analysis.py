@@ -140,6 +140,8 @@ class LSVSettingsPanel(ttk.Frame):
         self.batch_group = ttk.Entry(batch, width=12)
         self.batch_group.pack(side="left", padx=3)
         ttk.Button(batch, text="设置 Group", command=lambda: self._batch("group", self.batch_group.get())).pack(side="left")
+        ttk.Button(batch, text="纳入", command=lambda: self._batch("include", True)).pack(side="left", padx=(10, 3))
+        ttk.Button(batch, text="不纳入", command=lambda: self._batch("include", False)).pack(side="left", padx=3)
         self.batch_electrode = ttk.Combobox(batch, values=("Material", "Bare"), width=10, state="readonly")
         self.batch_electrode.set("Material")
         self.batch_electrode.pack(side="left", padx=(10, 3))
