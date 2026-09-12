@@ -8,7 +8,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-from analysis.it_events import ITEventBatchResult
+from analysis.it_events import ITAnalysisMode, ITEventBatchResult
 from export.figures import save_figure_formats
 from export.it_events import export_it_event_csv_bundle
 from plotting.it_events import (build_it_calibration_figure, build_it_event_figure,
@@ -24,10 +24,10 @@ class ITExportRun:
 
 def _new_output_directory(base: Path) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    candidate = base / f"it_event_analysis_{stamp}"
+    candidate = base / f"it_analysis_{stamp}"
     suffix = 1
     while candidate.exists():
-        candidate = base / f"it_event_analysis_{stamp}_{suffix:02d}"
+        candidate = base / f"it_analysis_{stamp}_{suffix:02d}"
         suffix += 1
     candidate.mkdir(parents=True)
     return candidate
@@ -38,11 +38,12 @@ def export_it_result(result: ITEventBatchResult, output_base: str | Path) -> ITE
 
     output = _new_output_directory(Path(output_base))
     generated = list(export_it_event_csv_bundle(result, output / "i-t" / "csv"))
-    figures = (
-        ("raw_with_events", build_it_event_figure(result)),
-        ("event_responses", build_it_response_figure(result)),
-    )
-    if any(item.calibration is not None for item in result.files):
+    figures = (("raw_continuous" if result.mode == ITAnalysisMode.CONTINUOUS
+                else "raw_with_events", build_it_event_figure(result)),)
+    if result.mode == ITAnalysisMode.EVENT:
+        figures += (("event_responses", build_it_response_figure(result)),)
+    if (result.mode == ITAnalysisMode.EVENT
+            and any(item.calibration is not None for item in result.files)):
         figures += (("calibration", build_it_calibration_figure(result)),)
     try:
         for name, figure in figures:

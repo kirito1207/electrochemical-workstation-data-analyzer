@@ -860,6 +860,7 @@ class MainWindow:
         workflow = self.workspace.it_workflow
         try:
             if action == "metadata": workflow.update_metadata(*values)
+            elif action == "batch_metadata": workflow.batch_update_metadata(*values)
             elif action == "add_event":
                 time_s, name, value, unit, notes = values
                 workflow.add_event(time_s=time_s, name=name, value=value, unit=unit, notes=notes)
@@ -930,7 +931,8 @@ class MainWindow:
         workspace_id = self.workspace.workspace_id
         self._running_workspace_id = workspace_id; self._set_busy(True)
         self.workspace.it_workflow.analysis_running = True
-        self.workspace.it_workflow.set_feedback("busy", "正在运行 Generic i-t Event 分析…")
+        mode_label = "Continuous" if request.mode.value == "continuous" else "Event"
+        self.workspace.it_workflow.set_feedback("busy", f"正在运行 Generic i-t {mode_label} 分析…")
         def task(cancel_event, emit):
             if cancel_event.is_set(): raise RuntimeError("分析已取消")
             return ITAnalysisCompleted(workspace_id, request, execute_it_analysis(request))

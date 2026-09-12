@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from math import isfinite
 import tkinter as tk
-from tkinter import simpledialog, ttk
+from tkinter import messagebox, simpledialog, ttk
+from time import monotonic
 from typing import Callable
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from chi_gui.it_workflow import (ITWorkflowState, calibration_display_rows,
-                                 response_display_rows, result_summary_text, summary_display_rows,
-                                 workflow_status_lines)
+from analysis.it_events import ITAnalysisMode
+from chi_gui.it_workflow import (ITMetadataBatchEdit, ITWorkflowState,
+                                 calibration_display_rows, continuous_display_rows,
+                                 response_display_rows, result_summary_text,
+                                 summary_display_rows, workflow_status_lines)
+from chi_gui.metadata_selection import MetadataSelectionModel
 from plotting.it_events import (ITResponseScatterPoint, build_it_calibration_figure,
                                 build_it_event_figure, build_it_response_figure)
 
@@ -23,6 +27,8 @@ FOOTER_INITIAL_TEXT_WRAP_PX = 430
 
 
 def available_it_result_plots(result) -> tuple[str, ...]:
+    if result is not None and result.mode == ITAnalysisMode.CONTINUOUS:
+        return ("Raw i-t / Continuous",)
     plots = ("Raw + Events", "Event Response")
     has_calibration = result is not None and any(item.calibration is not None for item in result.files)
     return plots + (("Calibration",) if has_calibration else ())
@@ -30,7 +36,7 @@ def available_it_result_plots(result) -> tuple[str, ...]:
 
 def normalize_it_result_plot(selected: str, result) -> str:
     choices = available_it_result_plots(result)
-    return selected if selected in choices else "Raw + Events"
+    return selected if selected in choices else choices[0]
 
 
 def event_double_click_edits(column: str) -> bool:
@@ -82,6 +88,61 @@ def nearest_it_response_point(series, axis, event_x: float, event_y: float,
     return best
 
 
+class ITMetadataBatchDialog(simpledialog.Dialog):
+    """Explicit atomic batch edit; Sample ID intentionally remains per-row."""
+
+    def __init__(self, parent, selected_count: int):
+        self.selected_count = selected_count
+        self.result: ITMetadataBatchEdit | None = None
+        super().__init__(parent, title="批量设置选中行")
+
+    def body(self, master):
+        ttk.Label(master, text=f"已选择：{self.selected_count} 个样本").grid(
+            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
+        )
+        ttk.Label(master, text="Include：").grid(row=1, column=0, sticky="e")
+        self.include = tk.StringVar(value="不修改")
+        ttk.Combobox(master, textvariable=self.include,
+                     values=("不修改", "纳入", "不纳入"), state="readonly", width=12).grid(
+            row=1, column=1, sticky="w"
+        )
+        self.update_group = tk.BooleanVar(value=False)
+        ttk.Checkbutton(master, text="修改 Group", variable=self.update_group).grid(
+            row=2, column=0, sticky="w", pady=(6, 0)
+        )
+        self.group = tk.StringVar()
+        group_entry = ttk.Entry(master, textvariable=self.group, width=28)
+        group_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(6, 0))
+        self.update_notes = tk.BooleanVar(value=False)
+        ttk.Checkbutton(master, text="修改 Notes", variable=self.update_notes).grid(
+            row=3, column=0, sticky="w", pady=(6, 0)
+        )
+        self.notes = tk.StringVar()
+        ttk.Entry(master, textvariable=self.notes, width=28).grid(
+            row=3, column=1, columnspan=2, sticky="ew", pady=(6, 0)
+        )
+        ttk.Label(master, text="勾选后留空表示清空；未勾选表示不修改。Sample ID 需逐行保持唯一。",
+                  foreground="#555555", wraplength=360).grid(
+            row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        )
+        return group_entry
+
+    def validate(self):
+        if (self.include.get() == "不修改" and not self.update_group.get()
+                and not self.update_notes.get()):
+            messagebox.showwarning("没有修改", "请至少选择一个要修改的字段。", parent=self)
+            return False
+        return True
+
+    def apply(self):
+        include = {"不修改": None, "纳入": True, "不纳入": False}[self.include.get()]
+        self.result = ITMetadataBatchEdit(
+            include=include,
+            update_group=self.update_group.get(), group=self.group.get(),
+            update_notes=self.update_notes.get(), notes=self.notes.get(),
+        )
+
+
 class ITSettingsPanel(ttk.Frame):
     def __init__(self, master, *, on_change: Callable, on_confirm_metadata: Callable,
                  on_confirm_timeline: Callable, on_add_cursor_event: Callable,
@@ -93,21 +154,41 @@ class ITSettingsPanel(ttk.Frame):
         self.on_add_cursor_event = on_add_cursor_event
         self.on_run = on_run
         self._state = None
+        self._workspace_token = None
+        self._selection_model = MetadataSelectionModel()
+        self._suppress_edit_until = 0.0
         self._calibration_event_ids_by_index = ()
         self.columnconfigure(0, weight=1); self.rowconfigure(0, weight=1)
         panes = ttk.Panedwindow(self, orient="vertical"); panes.grid(row=0, column=0, sticky="nsew")
 
         metadata_frame = ttk.LabelFrame(panes, text="① 样本信息")
         metadata_frame.columnconfigure(0, weight=1); metadata_frame.rowconfigure(0, weight=1)
-        self.metadata = ttk.Treeview(metadata_frame, columns=("include", "file", "sample", "group", "notes"), show="headings", height=5)
+        self.metadata = ttk.Treeview(metadata_frame, columns=("include", "file", "sample", "group", "notes"), show="headings", selectmode="extended", height=5)
         for key, label, width in (("include", "纳入", 55), ("file", "文件", 210),
                                   ("sample", "Sample ID", 130), ("group", "Group", 120),
                                   ("notes", "Notes", 180)):
             self.metadata.heading(key, text=label); self.metadata.column(key, width=width, stretch=key in {"file", "notes"})
         self.metadata.grid(row=0, column=0, sticky="nsew")
         self.metadata.bind("<Double-1>", self._edit_metadata)
-        ttk.Scrollbar(metadata_frame, orient="horizontal", command=self.metadata.xview).grid(row=1, column=0, sticky="ew")
-        ttk.Button(metadata_frame, text="确认样本信息", command=on_confirm_metadata).grid(row=2, column=0, sticky="e", pady=3)
+        self.metadata.bind("<ButtonPress-1>", self._drag_begin, add="+")
+        self.metadata.bind("<B1-Motion>", self._drag_motion, add="+")
+        self.metadata.bind("<ButtonRelease-1>", self._drag_end, add="+")
+        self.metadata.bind("<Control-a>", self._select_all)
+        self.metadata.bind("<Control-A>", self._select_all)
+        metadata_scroll = ttk.Scrollbar(metadata_frame, orient="vertical", command=self.metadata.yview)
+        metadata_scroll.grid(row=0, column=1, sticky="ns")
+        metadata_xscroll = ttk.Scrollbar(metadata_frame, orient="horizontal", command=self.metadata.xview)
+        metadata_xscroll.grid(row=1, column=0, sticky="ew")
+        self.metadata.configure(yscrollcommand=metadata_scroll.set, xscrollcommand=metadata_xscroll.set)
+        batch = ttk.Frame(metadata_frame)
+        batch.grid(row=2, column=0, columnspan=2, sticky="ew", pady=3)
+        ttk.Label(batch, text="批量设置选中行：").pack(side="left")
+        ttk.Button(batch, text="全选", command=self.select_all_rows).pack(side="left", padx=(0, 4))
+        ttk.Button(batch, text="取消选择", command=self.clear_selection).pack(side="left", padx=(0, 6))
+        ttk.Button(batch, text="批量设置选中行", command=self._batch_metadata).pack(side="left")
+        ttk.Button(metadata_frame, text="确认样本信息", command=on_confirm_metadata).grid(
+            row=3, column=0, columnspan=2, sticky="e", pady=3
+        )
         panes.add(metadata_frame, weight=2)
 
         event_frame = ttk.LabelFrame(panes, text="② Event Timeline（用户明确定义并确认）")
@@ -157,14 +238,22 @@ class ITSettingsPanel(ttk.Frame):
         ttk.Label(settings, text="Baseline = 记录起点至首个 Event；每个 Event 的 segment 延续到下一 Event/记录末尾，取尾段样本统计。",
                   foreground="#555555", wraplength=850).grid(row=1, column=0, columnspan=6, sticky="w", pady=3)
         self.calibration_enabled = tk.BooleanVar(value=False)
-        ttk.Checkbutton(settings, text="启用 Calibration（仅显式选择有数值且单位一致的 Events）",
-                        variable=self.calibration_enabled, command=self._set_calibration).grid(row=2, column=0, columnspan=3, sticky="w")
+        self.calibration_toggle = ttk.Checkbutton(
+            settings, text="启用 Calibration（仅显式选择有数值且单位一致的 Events）",
+            variable=self.calibration_enabled, command=self._set_calibration
+        )
+        self.calibration_toggle.grid(row=2, column=0, columnspan=3, sticky="w")
         self.x_label = tk.StringVar(); self.x_unit = tk.StringVar()
-        ttk.Label(settings, text="x label").grid(row=3, column=0, sticky="e"); ttk.Entry(settings, textvariable=self.x_label, width=16).grid(row=3, column=1, sticky="w")
-        ttk.Label(settings, text="x unit").grid(row=3, column=2, sticky="e"); ttk.Entry(settings, textvariable=self.x_unit, width=12).grid(row=3, column=3, sticky="w")
+        ttk.Label(settings, text="x label").grid(row=3, column=0, sticky="e")
+        self.x_label_entry = ttk.Entry(settings, textvariable=self.x_label, width=16)
+        self.x_label_entry.grid(row=3, column=1, sticky="w")
+        ttk.Label(settings, text="x unit").grid(row=3, column=2, sticky="e")
+        self.x_unit_entry = ttk.Entry(settings, textvariable=self.x_unit, width=12)
+        self.x_unit_entry.grid(row=3, column=3, sticky="w")
         self.calibration_events = tk.Listbox(settings, selectmode="extended", exportselection=False, height=3, width=35)
         self.calibration_events.grid(row=2, column=4, rowspan=2, sticky="ew", padx=5)
-        ttk.Button(settings, text="应用 Calibration 设置", command=self._set_calibration).grid(row=3, column=5, sticky="w")
+        self.calibration_apply = ttk.Button(settings, text="应用 Calibration 设置", command=self._set_calibration)
+        self.calibration_apply.grid(row=3, column=5, sticky="w")
         panes.add(settings, weight=2)
 
         self.footer = ttk.Frame(self)
@@ -186,16 +275,23 @@ class ITSettingsPanel(ttk.Frame):
         self.footer_actions = ttk.Frame(self.footer)
         self.footer_actions.grid(row=0, column=1, rowspan=2, sticky="e")
         self.run_button = ttk.Button(
-            self.footer_actions, text="开始正式 i-t Event 分析", command=on_run
+            self.footer_actions, text="开始正式 i-t 分析", command=on_run
         )
         self.run_button.grid(row=0, column=0, sticky="e")
         self.footer.bind("<Configure>", self._footer_resized, add="+")
 
     def render(self, state: ITWorkflowState, *, busy=False, workspace_token="default"):
         self._state = state
+        same_workspace = workspace_token == self._workspace_token
+        selected = self.metadata.selection() if same_workspace else ()
+        self._workspace_token = workspace_token
         self.metadata.delete(*self.metadata.get_children())
         for row in state.metadata_rows:
             self.metadata.insert("", "end", iid=row.record_key, values=("✓" if row.include else "—", row.file_name, row.sample_id, row.group, row.notes))
+        current_keys = tuple(row.record_key for row in state.metadata_rows)
+        self._selection_model.reset(current_keys, selected)
+        if selected:
+            self.metadata.selection_set(self._selection_model.selection())
         contexts = state.included_timeline_contexts
         self._timeline_context_keys = {label: key for key, label in contexts}
         labels = tuple(label for _key, label in contexts)
@@ -216,6 +312,12 @@ class ITSettingsPanel(ttk.Frame):
             self.events.insert("", "end", iid=event.event_id, values=values)
         self.tail.set(f"{state.tail_fraction:.6g}"); self.metric.set(state.analysis_metric)
         self.calibration_enabled.set(state.calibration_enabled); self.x_label.set(state.calibration_x_label); self.x_unit.set(state.calibration_x_unit)
+        calibration_state = "disabled" if state.analysis_mode == ITAnalysisMode.CONTINUOUS else "normal"
+        self.calibration_toggle.configure(state=calibration_state)
+        self.x_label_entry.configure(state=calibration_state)
+        self.x_unit_entry.configure(state=calibration_state)
+        self.calibration_events.configure(state=calibration_state)
+        self.calibration_apply.configure(state=calibration_state)
         self.calibration_events.delete(0, "end")
         calibration_items = calibration_display_items(state.events)
         self._calibration_event_ids_by_index = tuple(event_id for event_id, _label in calibration_items)
@@ -235,13 +337,56 @@ class ITSettingsPanel(ttk.Frame):
         self.feedback_label.configure(wraplength=wraplength)
 
     def _edit_metadata(self, event):
-        if self._state is None: return
+        if self._state is None or monotonic() < self._suppress_edit_until: return
         key = self.metadata.identify_row(event.y); column = self.metadata.identify_column(event.x)
         field = {"#1": "include", "#3": "sample_id", "#4": "group", "#5": "notes"}.get(column)
         if not key or not field: return
         row = next(row for row in self._state.metadata_rows if row.record_key == key)
         value = not row.include if field == "include" else simpledialog.askstring("编辑 i-t 样本信息", field, initialvalue=getattr(row, field), parent=self)
         if value is not None: self.on_change("metadata", key, field, value)
+
+    def _drag_begin(self, event):
+        key = self.metadata.identify_row(event.y)
+        self._selection_model.begin_drag(key, event.y, self.metadata.selection())
+
+    def _drag_motion(self, event):
+        key = self.metadata.identify_row(event.y)
+        selection = self._selection_model.drag_to(key, event.y)
+        if selection is None:
+            return None
+        self.metadata.selection_set(selection)
+        if event.y < 20:
+            self.metadata.yview_scroll(-1, "units")
+        elif event.y > self.metadata.winfo_height() - 20:
+            self.metadata.yview_scroll(1, "units")
+        return "break"
+
+    def _drag_end(self, _event):
+        if self._selection_model.finish_drag():
+            self._suppress_edit_until = monotonic() + 0.45
+
+    def _select_all(self, _event=None):
+        self.select_all_rows()
+        return "break"
+
+    def select_all_rows(self):
+        self.metadata.selection_set(self._selection_model.select_all())
+        self.metadata.focus_set()
+
+    def clear_selection(self):
+        self._selection_model.clear()
+        self.metadata.selection_remove(self.metadata.selection())
+
+    def _batch_metadata(self):
+        keys = tuple(self.metadata.selection())
+        if not keys:
+            if self._state is not None:
+                self._state.set_feedback("warning", "无法批量设置", ("请先选择至少一个样本。",))
+                self.feedback.set(self._state.feedback.text)
+            return
+        dialog = ITMetadataBatchDialog(self, len(keys))
+        if dialog.result is not None:
+            self.on_change("batch_metadata", keys, dialog.result)
 
     def _event_values(self, old=None):
         name = simpledialog.askstring("Event", "Event 名称：", initialvalue=old.name if old else "", parent=self)
@@ -320,11 +465,20 @@ class ITResultsPanel(ttk.Frame):
         self.status = tk.StringVar(value="尚未运行分析"); ttk.Label(self, textvariable=self.status).grid(row=0, column=0, sticky="w")
         self.notebook = ttk.Notebook(self); self.notebook.grid(row=1, column=0, sticky="nsew")
         definitions = {
+            "Continuous Summary": (("sample_id", "Sample ID"), ("group", "Group"),
+                                   ("duration_s", "Duration / s"),
+                                   ("mean_current_uA", "Mean current / µA"),
+                                   ("sd_current_uA", "SD / µA"),
+                                   ("min_current_uA", "Min / µA"),
+                                   ("max_current_uA", "Max / µA"),
+                                   ("first_time_s", "First time / s"),
+                                   ("last_time_s", "Last time / s"),
+                                   ("status", "Status")),
             "Event Response": (("sample_id", "Sample ID"), ("group", "Group"), ("event", "Event"), ("time_s", "Time/s"), ("baseline_mean", "Baseline mean"), ("response_mean", "Response mean"), ("signed_delta", "Signed ΔI"), ("magnitude", "Magnitude"), ("response_sd", "Response SD"), ("window_start", "Window start"), ("window_end", "Window end"), ("status", "Status")),
             "Event Summary": (("group", "Group"), ("event", "Event"), ("n", "n"), ("mean", "Mean"), ("sd", "SD"), ("sem", "SEM"), ("cv_percent", "CV%")),
             "Calibration": (("sample_id", "Sample ID"), ("metric", "Metric"), ("x_label", "x label"), ("x_unit", "x unit"), ("slope", "Slope"), ("intercept", "Intercept"), ("r_squared", "R²"), ("events", "Events"), ("method", "Method")),
         }
-        self.tables = {}; self.table_messages = {}
+        self.tables = {}; self.table_messages = {}; self.table_frames = {}
         for title, columns in definitions.items():
             frame = ttk.Frame(self.notebook); frame.columnconfigure(0, weight=1); frame.rowconfigure(1, weight=1)
             message = tk.StringVar()
@@ -332,25 +486,40 @@ class ITResultsPanel(ttk.Frame):
             tree = ttk.Treeview(frame, columns=tuple(key for key, _ in columns), show="headings")
             for key, label in columns: tree.heading(key, text=label); tree.column(key, width=105, stretch=True)
             tree.grid(row=1, column=0, sticky="nsew"); ttk.Scrollbar(frame, orient="horizontal", command=tree.xview).grid(row=2, column=0, sticky="ew")
-            self.notebook.add(frame, text=title); self.tables[title] = tree; self.table_messages[title] = message
+            self.notebook.add(frame, text=title); self.tables[title] = tree
+            self.table_messages[title] = message; self.table_frames[title] = frame
         warnings_frame = ttk.Frame(self.notebook); warnings_frame.columnconfigure(0, weight=1); warnings_frame.rowconfigure(0, weight=1)
         self.warnings = tk.Text(warnings_frame, wrap="word"); self.warnings.grid(row=0, column=0, sticky="nsew")
         self.notebook.add(warnings_frame, text="Warnings / QC")
+        self.notebook.tab(self.table_frames["Continuous Summary"], state="hidden")
 
     def render(self, state: ITWorkflowState):
         self.status.set(result_summary_text(state.analysis_result) if state.analysis_result else state.result_status)
-        getters = (("Event Response", response_display_rows), ("Event Summary", summary_display_rows), ("Calibration", calibration_display_rows))
+        getters = (("Continuous Summary", continuous_display_rows),
+                   ("Event Response", response_display_rows),
+                   ("Event Summary", summary_display_rows),
+                   ("Calibration", calibration_display_rows))
         for title, getter in getters:
             tree = self.tables[title]; tree.delete(*tree.get_children())
             if state.analysis_result:
                 for index, row in enumerate(getter(state.analysis_result)): tree.insert("", "end", iid=str(index), values=tuple(row.values()))
+        continuous = bool(state.analysis_result and
+                          state.analysis_result.mode == ITAnalysisMode.CONTINUOUS)
+        self.notebook.tab(self.table_frames["Continuous Summary"],
+                          state="normal" if continuous else "hidden")
+        for title in ("Event Response", "Event Summary", "Calibration"):
+            self.notebook.tab(self.table_frames[title], state="hidden" if continuous else "normal")
         self.table_messages["Calibration"].set(
             "" if state.analysis_result and any(item.calibration is not None for item in state.analysis_result.files)
             else "本次分析未启用 Calibration。" if state.analysis_result else "尚未运行分析"
         )
         self.warnings.delete("1.0", "end")
         if state.analysis_result:
-            lines = ["原始 i-t 不平滑；Unavailable rows 保留；Calibration 仅使用用户显式选择的 Events。"]
+            lines = [
+                "原始 i-t 不平滑；Continuous Summary 使用完整 record。"
+                if continuous else
+                "原始 i-t 不平滑；Unavailable rows 保留；Calibration 仅使用用户显式选择的 Events。"
+            ]
             lines.extend(warning for item in state.analysis_result.files for warning in item.warnings)
             if state.result_stale: lines.insert(0, "设置已修改：当前结果已过期，禁止导出。")
             self.warnings.insert("1.0", "\n".join(lines))
@@ -380,7 +549,7 @@ class ITResultPlotPanel(ttk.Frame):
         if state is None or state.analysis_result is None:
             self.plot_combo.configure(values=available_it_result_plots(None))
             self.plot_type.set("Raw + Events")
-            ttk.Label(self.host, text="完成正式 i-t Event 分析后可查看结果图。", padding=12).pack(); return
+            ttk.Label(self.host, text="完成正式 i-t 分析后可查看结果图。", padding=12).pack(); return
         choices = available_it_result_plots(state.analysis_result)
         self.plot_combo.configure(values=choices)
         kind = normalize_it_result_plot(state.selected_result_plot, state.analysis_result)

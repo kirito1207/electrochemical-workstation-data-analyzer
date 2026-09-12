@@ -11,9 +11,11 @@ from analysis.it_events import (
     Event,
     EventAnalysisError,
     EventTimeline,
+    ITAnalysisMode,
     ITEventBatchResult,
     ITEventInput,
     PlateauPolicy,
+    analyze_it_continuous_batch,
     analyze_it_events,
     summarize_event_responses,
 )
@@ -30,6 +32,15 @@ class ITMetadataDraftRow:
     include: bool = True
     sample_id: str = ""
     group: str = ""
+    notes: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ITMetadataBatchEdit:
+    include: bool | None = None
+    update_group: bool = False
+    group: str = ""
+    update_notes: bool = False
     notes: str = ""
 
 
@@ -54,6 +65,7 @@ class ITAnalysisRequest:
     policy: PlateauPolicy
     calibration_selection: CalibrationSelection | None
     signature: tuple[object, ...]
+    mode: ITAnalysisMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +145,16 @@ class ITWorkflowState:
             for index, row in enumerate((row for row in self.metadata_rows if row.include), start=1)
         )
 
+    @property
+    def analysis_mode(self) -> ITAnalysisMode:
+        if self.events:
+            return ITAnalysisMode.EVENT
+        included_keys = {row.record_key for row in self.metadata_rows if row.include}
+        return (ITAnalysisMode.EVENT
+                if any(key in included_keys and override.events
+                       for key, override in self.sample_timeline_overrides.items())
+                else ITAnalysisMode.CONTINUOUS)
+
     def metadata_row(self, record_key: str) -> ITMetadataDraftRow:
         return next(row for row in self.metadata_rows if row.record_key == record_key)
 
@@ -172,7 +194,19 @@ class ITWorkflowState:
                 self.timeline_confirmed = False
         if self.analysis_result is not None:
             self.result_stale = True
+        self._disable_calibration_for_continuous_mode()
         self.set_feedback("info", "设置已修改，请重新确认并运行分析")
+
+    def _disable_calibration_for_continuous_mode(self) -> bool:
+        if self.analysis_mode != ITAnalysisMode.CONTINUOUS:
+            return False
+        changed = bool(self.calibration_enabled or self.calibration_event_ids
+                       or self.calibration_x_label or self.calibration_x_unit)
+        self.calibration_enabled = False
+        self.calibration_event_ids = ()
+        self.calibration_x_label = ""
+        self.calibration_x_unit = ""
+        return changed
 
     def sync_records(self, records: Iterable[FileRecord]) -> None:
         usable = tuple(r for r in records if r.parse_success and r.experiment_type == "i-t")
@@ -192,6 +226,7 @@ class ITWorkflowState:
                 self.result_stale = True
             self.set_feedback("warning", "i-t 文件列表已变化，请检查并确认样本信息"
                               if usable else "尚未导入可分析的 i-t 文件")
+        self._disable_calibration_for_continuous_mode()
 
     def update_metadata(self, record_key: str, field_name: str, value: object) -> None:
         if field_name not in {"include", "sample_id", "group", "notes"}:
@@ -199,6 +234,34 @@ class ITWorkflowState:
         row = self.metadata_row(record_key)
         setattr(row, field_name, bool(value) if field_name == "include" else str(value))
         if not row.include and self.current_timeline_record_key == record_key:
+            self.current_timeline_record_key = None
+        self._changed(metadata=True)
+
+    def batch_update_metadata(self, record_keys: Iterable[str],
+                              edit: ITMetadataBatchEdit) -> None:
+        """Validate a multi-row edit completely before changing any row."""
+
+        keys = tuple(dict.fromkeys(record_keys))
+        if not keys:
+            raise ValueError("请先选择至少一个 i-t 样本。")
+        existing = {row.record_key: row for row in self.metadata_rows}
+        missing = tuple(key for key in keys if key not in existing)
+        if missing:
+            raise ValueError("批量编辑包含当前 Workspace 中不存在的样本。")
+        if edit.include is not None and not isinstance(edit.include, bool):
+            raise ValueError("Include 批量值必须为 True、False 或不修改。")
+        if not any((edit.include is not None, edit.update_group, edit.update_notes)):
+            raise ValueError("没有选择要批量修改的字段。")
+        for key in keys:
+            row = existing[key]
+            if edit.include is not None:
+                row.include = edit.include
+            if edit.update_group:
+                row.group = str(edit.group)
+            if edit.update_notes:
+                row.notes = str(edit.notes)
+        if self.current_timeline_record_key in keys and not existing[
+                self.current_timeline_record_key].include:
             self.current_timeline_record_key = None
         self._changed(metadata=True)
 
@@ -302,8 +365,6 @@ class ITWorkflowState:
                 "当前样本正在继承默认 Timeline；请切换到默认 Timeline 确认，或先创建样本专用 Timeline。",
             ))
         target = self.current_events
-        if not target:
-            raise GUIWorkflowValidationError(("Event Timeline 为空；仅可进行 raw preview，不能正式分析。",))
         source = "GUI Default Event Timeline"
         start = end = None
         if self.current_timeline_record_key is not None:
@@ -322,7 +383,11 @@ class ITWorkflowState:
             self.current_override.confirmed = True
         else:
             self.timeline_confirmed = True
-        self.set_feedback("success", f"{self.timeline_context_status} 已确认：{len(target)} 个 Event")
+        self.set_feedback(
+            "success",
+            (f"{self.timeline_context_status} 已确认：{len(target)} 个 Event"
+             if target else f"{self.timeline_context_status} 未定义 Event；Continuous mode 无需确认"),
+        )
         return timeline
 
     def timeline_for_record_key(self, record_key: str) -> EventTimeline:
@@ -345,6 +410,11 @@ class ITWorkflowState:
             self._changed()
 
     def set_calibration(self, enabled: bool, event_ids: Iterable[str], x_label: str, x_unit: str) -> None:
+        if self.analysis_mode == ITAnalysisMode.CONTINUOUS:
+            self._disable_calibration_for_continuous_mode()
+            if enabled:
+                self.set_feedback("warning", "Continuous mode 不提供 Calibration")
+            return
         replacement = (bool(enabled), tuple(event_ids), x_label.strip(), x_unit.strip())
         current = (self.calibration_enabled, self.calibration_event_ids,
                    self.calibration_x_label, self.calibration_x_unit)
@@ -364,14 +434,15 @@ class ITWorkflowState:
         inputs = tuple(ITEventInput(by_key[row.record_key].data, row.sample_id.strip(),
                                     row.group.strip(), True, row.notes) for row in included)
         timelines = tuple(self.timeline_for_record_key(row.record_key) for row in included)
+        mode = self.analysis_mode
         calibration = (CalibrationSelection(self.calibration_event_ids,
                                             self.calibration_x_label,
                                             self.calibration_x_unit)
-                       if self.calibration_enabled else None)
+                       if self.calibration_enabled and mode == ITAnalysisMode.EVENT else None)
         return ITAnalysisRequest(tuple(row.record_key for row in included), inputs, self.timeline,
                                  timelines, self.analysis_metric,
                                  PlateauPolicy(fraction=self.tail_fraction), calibration,
-                                 self.current_signature())
+                                 self.current_signature(), mode)
 
     def accept_result(self, request: ITAnalysisRequest, result: ITEventBatchResult) -> None:
         self.analysis_result = result
@@ -379,7 +450,8 @@ class ITWorkflowState:
         self.result_stale = self.current_signature() != request.signature
         self.analysis_running = False
         self.validation_errors = ()
-        self.set_feedback("success", "Generic i-t Event 分析完成")
+        label = "Continuous" if result.mode == ITAnalysisMode.CONTINUOUS else "Event"
+        self.set_feedback("success", f"Generic i-t {label} 分析完成")
 
     def require_exportable_result(self) -> ITEventBatchResult:
         if self.analysis_result is None:
@@ -396,18 +468,18 @@ def validate_it_workflow(workflow: ITWorkflowState, records: Iterable[FileRecord
         errors.append("样本信息尚未由用户确认。")
     included = tuple(row for row in workflow.metadata_rows if row.include)
     by_key = {record.key: record for record in records}
+    mode = workflow.analysis_mode
     for row in included:
         timeline = workflow.timeline_for_record_key(row.record_key)
-        if row.record_key in workflow.sample_timeline_overrides and not timeline.user_confirmed:
-            errors.append(f"Sample {row.sample_id.strip() or row.file_name} 的样本专用 Timeline 尚未确认。")
-        elif row.record_key not in workflow.sample_timeline_overrides and not workflow.timeline_confirmed:
-            errors.append("默认 Event Timeline 尚未由用户确认。")
-        if not timeline.events:
-            errors.append(f"Sample {row.sample_id.strip() or row.file_name} 的 Event Timeline 为空。")
+        if mode == ITAnalysisMode.EVENT:
+            if row.record_key in workflow.sample_timeline_overrides and not timeline.user_confirmed:
+                errors.append(f"Sample {row.sample_id.strip() or row.file_name} 的样本专用 Timeline 尚未确认。")
+            elif row.record_key not in workflow.sample_timeline_overrides and not workflow.timeline_confirmed:
+                errors.append("已定义 Event，但默认 Event Timeline 尚未由用户确认。")
         record = by_key.get(row.record_key)
         if record is None or not isinstance(record.data, ITData):
             errors.append("已确认样本中存在当前 Workspace 无法定位的 i-t 文件。")
-        if workflow.calibration_enabled:
+        if mode == ITAnalysisMode.EVENT and workflow.calibration_enabled:
             selection = CalibrationSelection(workflow.calibration_event_ids,
                                              workflow.calibration_x_label,
                                              workflow.calibration_x_unit)
@@ -425,6 +497,8 @@ def validate_it_workflow(workflow: ITWorkflowState, records: Iterable[FileRecord
 
 
 def execute_it_analysis(request: ITAnalysisRequest) -> ITEventBatchResult:
+    if request.mode == ITAnalysisMode.CONTINUOUS:
+        return analyze_it_continuous_batch(request.inputs, metric=request.metric)
     files = tuple(
         analyze_it_events(item.data, timeline, sample_id=item.sample_id, group=item.group,
                           metric=request.metric, policy=request.policy,
@@ -468,10 +542,26 @@ def calibration_display_rows(result: ITEventBatchResult) -> tuple[dict[str, obje
     } for item in result.files if (calibration := item.calibration) is not None)
 
 
+def continuous_display_rows(result: ITEventBatchResult) -> tuple[dict[str, object], ...]:
+    return tuple({
+        "sample_id": row.sample_id, "group": row.group, "duration_s": row.duration_s,
+        "mean_current_uA": row.mean_current_uA, "sd_current_uA": row.sd_current_uA,
+        "min_current_uA": row.min_current_uA, "max_current_uA": row.max_current_uA,
+        "first_time_s": row.first_time_s, "last_time_s": row.last_time_s,
+        "status": row.status,
+    } for row in result.continuous_summaries)
+
+
 def workflow_status_lines(workflow: ITWorkflowState) -> tuple[str, ...]:
+    if workflow.analysis_mode == ITAnalysisMode.CONTINUOUS:
+        timeline_status = "未定义（Continuous mode）"
+    else:
+        event_count = len(workflow.events)
+        timeline_status = (f"已确认 {event_count} Events" if workflow.timeline_confirmed
+                           else "未确认")
     return (
         f"① 样本信息：{'已确认' if workflow.metadata_confirmed else '未确认'}",
-        f"② Default Timeline：{'已确认' if workflow.timeline_confirmed else '未确认'}；专用 {len(workflow.sample_timeline_overrides)}",
+        f"② Event Timeline：{timeline_status}；专用 {len(workflow.sample_timeline_overrides)}",
         f"③ 响应设置：尾段 {workflow.tail_fraction:.0%}；{workflow.analysis_metric}",
         f"④ Calibration：{'开启' if workflow.calibration_enabled else '关闭'}",
         f"⑤ 正式分析：{workflow.result_status}",
@@ -480,13 +570,17 @@ def workflow_status_lines(workflow: ITWorkflowState) -> tuple[str, ...]:
 
 def result_summary_text(result: ITEventBatchResult) -> str:
     groups = tuple(dict.fromkeys(item.group for item in result.files))
+    if result.mode == ITAnalysisMode.CONTINUOUS:
+        return (f"✓ Continuous 分析完成｜Files：{len(result.files)}｜"
+                f"Groups：{len(groups)}｜Events：0")
     event_ids = tuple(dict.fromkeys(row.event_id for item in result.files for row in item.responses))
     calibration = "开启" if result.calibration_selection is not None else "关闭"
     return (f"✓ 分析完成｜Files：{len(result.files)}｜Events：{len(event_ids)}｜"
             f"Groups：{len(groups)}｜指标：{result.analysis_metric}｜Calibration：{calibration}")
 
 
-__all__ = ["ITAnalysisCompleted", "ITAnalysisRequest", "ITMetadataDraftRow", "ITWorkflowState",
+__all__ = ["ITAnalysisCompleted", "ITAnalysisRequest", "ITMetadataBatchEdit",
+           "ITMetadataDraftRow", "ITWorkflowState",
            "SampleTimelineOverride", "calibration_display_rows", "execute_it_analysis",
-           "response_display_rows", "result_summary_text", "summary_display_rows",
+           "continuous_display_rows", "response_display_rows", "result_summary_text", "summary_display_rows",
            "validate_it_workflow", "workflow_status_lines"]

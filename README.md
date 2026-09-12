@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.3.1.2
+# Electrochemical Workstation Data Analyzer — Stage 5.3.1.3
 
-当前开发状态：**Stage 5.3.1.2（Event display indexing and stable analysis footer）**。
+当前开发状态：**Stage 5.3.1.3（Event-optional i-t analysis and LSV-consistent batch metadata editing）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -314,7 +314,7 @@ Stage 5.3 建立 backend/API、通用 export 与 event-marker figure。numeric c
 
 ## Stage 5.3.1 Generic i-t Event GUI
 
-i-t 页面现已启用“数据与曲线 / 分析设置 / 统计结果 / 结果图表”完整工作流。分析设置包含 i-t 专用 Sample ID/Group/Notes metadata（不使用 Bare/Material）、任意 Event name/time/value/unit/notes 的 Event Timeline、默认 20% 的 segment 尾段比例、signed/magnitude 指标，以及默认关闭的可选 Calibration。Timeline 按时间自动排序，Event ID 在编辑中保持稳定；同一时间不能定义两个 Event。空或未确认 Timeline 只能继续 raw preview，不能运行正式分析。
+i-t 页面现已启用“数据与曲线 / 分析设置 / 统计结果 / 结果图表”完整工作流。分析设置包含 i-t 专用 Sample ID/Group/Notes metadata（不使用 Bare/Material）、任意 Event name/time/value/unit/notes 的 Event Timeline、默认 20% 的 segment 尾段比例、signed/magnitude 指标，以及默认关闭的可选 Calibration。Timeline 按时间自动排序，Event ID 在编辑中保持稳定；同一时间不能定义两个 Event。没有任何 effective Event 时直接进入 Continuous mode；一旦定义 Event，则相关 Timeline 必须确认后才能正式分析。
 
 Baseline 明确定义为记录起点至首个 Event；每个 Event 从自身时间延续到下一个 Event，最后一个延续到记录末尾。正式 response、SD、signed ΔI 与 magnitude 全部来自 Stage 5.3 backend 的多点窗口结果。共享 Timeline 可用于 1/N 条不同时长的记录，短记录缺少的后期窗口以 unavailable row 保留，不删除整条记录。
 
@@ -337,6 +337,14 @@ Default 与每个 override 分别确认。已创建但未确认的 override 不�
 Event 主表现在只显示按当前 Timeline 时间顺序在每次 render 时生成的连续 `#`，不再向普通用户展示 `event_17` 一类内部 ID。Display index 不是 Event model、analysis result 或 export 字段；Treeview iid、编辑、删除、Default/override 对齐、Calibration selection、response summary 与 CSV provenance 仍使用真实且不复用的稳定 `event_id`。删除或重新排序 Event 只会改变显示序号，不会重编号 scientific/internal identity。Calibration 列表同样显示易读序号，并通过独立映射保存真正 event_id，不从显示文本反向解析。
 
 i-t 分析设置 footer 已从三个相互竞争横向空间的 `pack` widgets 改为两列 `grid`：左列用两行显示可换行 status/feedback，右列是固定 action area。wraplength 根据 footer 实际宽度和按钮 requested width 调整，因此 stale、validation error、长中文 Sample ID/Timeline 状态不会再把“开始正式 i-t Event 分析”推离可视区域。按钮在普通、stale、validation failure 和 analysis complete 状态保持可见且 enabled，仅在后台 busy 时 disabled。Workspace 自增显示编号语义刻意未改变。
+
+## Stage 5.3.1.3 Event-optional analysis and batch metadata
+
+Generic i-t formal analysis now has two explicit result modes. If every included record's effective Timeline is empty, analysis runs in **Continuous mode** without Timeline confirmation and without inventing an Event. Its backend summary uses each complete record and reports Sample ID, Group, duration, mean/sample SD/min/max current in µA, first/last time, and status. The only result plot is the complete raw i-t series; export contains `continuous_summary.csv` plus the raw figure and deliberately omits Event/response/Calibration CSVs. Calibration is unavailable and its prior state is cleared when the workflow becomes Continuous.
+
+If the Default Timeline or an included sample override contains an Event, the batch enters **Event mode**. Defined but unconfirmed Timelines remain blocking; confirmed Timelines continue through the unchanged Stage 5.3 baseline, tail-fraction, signed ΔI, magnitude and explicit Calibration formulas. Empty effective Timelines in an Event batch may be explicitly confirmed and yield absent responses rather than being silently analyzed as continuous records.
+
+i-t metadata now reuses the LSV `MetadataSelectionModel`: normal click, Ctrl-click, Shift range selection, Ctrl+A, drag range selection, Select All and Clear Selection follow the same interaction pattern. “批量设置选中行” atomically applies Include, Group and/or Notes; checkboxes distinguish “do not modify” from intentional clearing. Sample ID is intentionally excluded because assigning one value to several rows would violate uniqueness. Batch edits invalidate metadata confirmation, stale an existing result, and preserve sample Timeline overrides through stable `record_key` identity. Windows checks are listed in `docs/windows_stage5313_checklist.md`.
 
 ## 安装与测试
 

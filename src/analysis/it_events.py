@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal, Sequence
 
 import numpy as np
@@ -14,6 +15,11 @@ from chi_parser import ITData
 
 class EventAnalysisError(ValueError):
     pass
+
+
+class ITAnalysisMode(str, Enum):
+    CONTINUOUS = "continuous"
+    EVENT = "event"
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +194,21 @@ class ITEventFileResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ITContinuousSummary:
+    source_file: str
+    sample_id: str
+    group: str
+    duration_s: float
+    mean_current_uA: float
+    sd_current_uA: float
+    min_current_uA: float
+    max_current_uA: float
+    first_time_s: float
+    last_time_s: float
+    status: str = "ok"
+
+
+@dataclass(frozen=True, slots=True)
 class ITEventInput:
     data: ITData
     sample_id: str
@@ -203,6 +224,58 @@ class ITEventBatchResult:
     summaries: tuple[EventResponseSummary, ...]
     analysis_metric: str
     calibration_selection: CalibrationSelection | None
+    mode: ITAnalysisMode = ITAnalysisMode.EVENT
+    continuous_summaries: tuple[ITContinuousSummary, ...] = ()
+
+
+def summarize_it_continuous_record(data: ITData, *, sample_id: str,
+                                   group: str = "") -> ITContinuousSummary:
+    """Describe one complete immutable i-t record without defining Events."""
+
+    times = np.asarray(data.time_s, dtype=float)
+    currents_uA = np.asarray(data.current_A, dtype=float) * 1e6
+    if times.size == 0 or currents_uA.size == 0 or times.size != currents_uA.size:
+        raise EventAnalysisError("Continuous analysis requires aligned non-empty time/current data.")
+    if not np.all(np.isfinite(times)) or not np.all(np.isfinite(currents_uA)):
+        raise EventAnalysisError("Continuous analysis requires finite time/current data.")
+    first = float(times[0])
+    last = float(times[-1])
+    return ITContinuousSummary(
+        data.file_name,
+        sample_id,
+        group,
+        last - first,
+        float(np.mean(currents_uA)),
+        float(np.std(currents_uA, ddof=1)) if currents_uA.size > 1 else math.nan,
+        float(np.min(currents_uA)),
+        float(np.max(currents_uA)),
+        first,
+        last,
+    )
+
+
+def analyze_it_continuous_batch(inputs: Sequence[ITEventInput], *,
+                                metric: str = "signed") -> ITEventBatchResult:
+    """Analyze complete records without inventing an Event or response window."""
+
+    included = tuple(row for row in inputs if row.include)
+    ids = [row.sample_id for row in included]
+    if not included or any(not value.strip() for value in ids) or len(ids) != len(set(ids)):
+        raise EventAnalysisError("Included Sample IDs must be non-empty and unique.")
+    empty_timeline = EventTimeline((), False, "No Events (Continuous mode)")
+    summaries = tuple(
+        summarize_it_continuous_record(row.data, sample_id=row.sample_id, group=row.group)
+        for row in included
+    )
+    files = tuple(
+        ITEventFileResult(row.data, row.sample_id, row.group, empty_timeline, (), (), None,
+                          tuple(row.data.warnings))
+        for row in included
+    )
+    return ITEventBatchResult(
+        empty_timeline, files, (), metric, None,
+        ITAnalysisMode.CONTINUOUS, summaries,
+    )
 
 
 def define_response_windows(data: ITData, timeline: EventTimeline) -> tuple[ResponseWindow, ...]:
@@ -308,4 +381,4 @@ def analyze_it_event_batch(inputs: Sequence[ITEventInput], timeline, *, metric="
     return ITEventBatchResult(timeline, files, summaries, metric, calibration_selection)
 
 
-__all__ = [name for name in globals() if name.startswith(("Event", "ITEvent", "Plateau", "Response", "Window", "Calibration")) or name in {"analyze_it_events", "analyze_it_event_batch", "calculate_event_responses", "define_response_windows", "extract_window_statistics", "fit_event_calibration", "summarize_event_responses"}]
+__all__ = [name for name in globals() if name.startswith(("Event", "ITEvent", "ITAnalysis", "ITContinuous", "Plateau", "Response", "Window", "Calibration")) or name in {"analyze_it_continuous_batch", "analyze_it_events", "analyze_it_event_batch", "calculate_event_responses", "define_response_windows", "extract_window_statistics", "fit_event_calibration", "summarize_event_responses", "summarize_it_continuous_record"}]

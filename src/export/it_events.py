@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from dataclasses import asdict
 from pathlib import Path
-from analysis.it_events import ITEventBatchResult
+from analysis.it_events import ITAnalysisMode, ITEventBatchResult
 
 def _write(path, rows, fields):
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -13,6 +13,14 @@ def _write(path, rows, fields):
 
 def export_it_event_csv_bundle(result: ITEventBatchResult, output_dir):
     output = Path(output_dir)
+    if result.mode == ITAnalysisMode.CONTINUOUS:
+        rows = [asdict(row) for row in result.continuous_summaries]
+        fields = tuple(rows[0]) if rows else (
+            "source_file", "sample_id", "group", "duration_s", "mean_current_uA",
+            "sd_current_uA", "min_current_uA", "max_current_uA", "first_time_s",
+            "last_time_s", "status",
+        )
+        return (_write(output / "continuous_summary.csv", rows, fields),)
     events = [asdict(row) for row in result.timeline.events]
     responses = [asdict(row) for item in result.files for row in item.responses]
     windows = [{"source_file": item.data.file_name, "sample_id": item.sample_id, "group": item.group, **asdict(row)} for item in result.files for row in item.windows]

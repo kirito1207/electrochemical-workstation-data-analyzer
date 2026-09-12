@@ -82,11 +82,10 @@ def test_duplicate_event_time_rejected_inline():
         workflow.add_event(time_s=10, name="B")
 
 
-def test_empty_and_unconfirmed_timeline_block_formal_analysis(synthetic_it_data):
+def test_empty_timeline_is_continuous_but_defined_unconfirmed_event_blocks(synthetic_it_data):
     records = _records(synthetic_it_data, 1); workflow = ITWorkflowState(); workflow.sync_records(records)
     workflow.update_metadata(records[0].key, "group", "G"); workflow.confirm_metadata()
-    with pytest.raises(GUIWorkflowValidationError, match="Timeline"):
-        workflow.confirm_timeline(records)
+    assert workflow.build_request(records).mode.value == "continuous"
     workflow.add_event(time_s=31, name="A")
     assert any("Timeline" in error for error in validate_it_workflow(workflow, records))
 

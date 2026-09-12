@@ -5,6 +5,8 @@ import math
 
 import numpy as np
 
+from analysis.it_events import ITAnalysisMode
+
 from .common import (colors_for_groups, configure_group_ticks, group_figure_width,
                      legend_columns, new_figure, style_axes)
 
@@ -52,7 +54,10 @@ def build_it_event_figure(result):
                 label += f"\n{event.value:g}" + (f" {event.unit}" if event.unit else "")
             axis.text(event.time_s, 0.98, label, transform=axis.get_xaxis_transform(),
                       rotation=90, va="top", ha="right", fontsize=7)
-    axis.set(xlabel="Time / s", ylabel="Current / µA", title="i-t raw time series with confirmed Events")
+    title = ("i-t raw full-record time series (Continuous mode)"
+             if result.mode == ITAnalysisMode.CONTINUOUS
+             else "i-t raw time series with confirmed Events")
+    axis.set(xlabel="Time / s", ylabel="Current / µA", title=title)
     if result.files: axis.legend(ncol=legend_columns(len(result.files)))
     style_axes(axis)
     return figure

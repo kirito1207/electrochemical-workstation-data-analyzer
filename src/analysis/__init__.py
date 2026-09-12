@@ -87,11 +87,12 @@ from .it_qc import (
 )
 from .it_events import (
     CalibrationSelection, Event, EventAnalysisError, EventCalibrationResult,
-    EventResponse, EventResponseSummary, EventTimeline, ITEventBatchResult, ITEventFileResult,
+    EventResponse, EventResponseSummary, EventTimeline, ITAnalysisMode,
+    ITContinuousSummary, ITEventBatchResult, ITEventFileResult,
     ITEventInput, PlateauPolicy, ResponseWindow, WindowStatistics,
-    analyze_it_event_batch, analyze_it_events, calculate_event_responses,
+    analyze_it_continuous_batch, analyze_it_event_batch, analyze_it_events, calculate_event_responses,
     define_response_windows, extract_window_statistics, fit_event_calibration,
-    summarize_event_responses,
+    summarize_event_responses, summarize_it_continuous_record,
 )
 
 __all__ = [
@@ -163,9 +164,10 @@ __all__ = [
 
 __all__ += [
     "CalibrationSelection", "Event", "EventAnalysisError", "EventCalibrationResult",
-    "EventResponse", "EventResponseSummary", "EventTimeline", "ITEventBatchResult", "ITEventFileResult",
+    "EventResponse", "EventResponseSummary", "EventTimeline", "ITAnalysisMode",
+    "ITContinuousSummary", "ITEventBatchResult", "ITEventFileResult",
     "ITEventInput", "PlateauPolicy", "ResponseWindow", "WindowStatistics",
-    "analyze_it_event_batch", "analyze_it_events", "calculate_event_responses",
+    "analyze_it_continuous_batch", "analyze_it_event_batch", "analyze_it_events", "calculate_event_responses",
     "define_response_windows", "extract_window_statistics", "fit_event_calibration",
-    "summarize_event_responses",
+    "summarize_event_responses", "summarize_it_continuous_record",
 ]
