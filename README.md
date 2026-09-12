@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.3.1.1
+# Electrochemical Workstation Data Analyzer — Stage 5.3.1.2
 
-当前开发状态：**Stage 5.3.1.1（Generic i-t Event GUI usability and per-sample timeline override）**。
+当前开发状态：**Stage 5.3.1.2（Event display indexing and stable analysis footer）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -331,6 +331,12 @@ i-t Timeline 采用两层且仅两层的继承模型：一个 Workspace-local **
 Default 与每个 override 分别确认。已创建但未确认的 override 不会静默 fallback；正式分析会阻止并指出对应 Sample。GUI orchestration 按 record 选择 confirmed Timeline，然后逐条复用 Stage 5.3 `analyze_it_events()`，最终继续用 backend `summarize_event_responses()` 按 event_id 汇总。某个 override 删除 Event 不会令后续 Event 按行号错位。Calibration selection 仍是 Workspace-level logical event_id 集合；不同 Sample 可拥有不同 Event time，但必须保留被选择 Event 的 compatible value/unit。
 
 所有通过 `plotting.common.new_figure()` 创建的 LSV/i-t 科研图与 GUI raw preview 现在共享同一个 CJK font policy；Windows 优先 Microsoft YaHei/SimHei，再使用跨平台 fallback，不提交字体文件。Calibration 未产生结果时，结果图 selector 只显示 Raw + Events 和 Event Response；只有本次 result 实际包含 calibration 才显示 Calibration。若旧选择已失效会自动回退到 Raw + Events，且 disabled Calibration 不构建或导出 calibration figure/CSV。
+
+## Stage 5.3.1.2 Event display identity and stable footer
+
+Event 主表现在只显示按当前 Timeline 时间顺序在每次 render 时生成的连续 `#`，不再向普通用户展示 `event_17` 一类内部 ID。Display index 不是 Event model、analysis result 或 export 字段；Treeview iid、编辑、删除、Default/override 对齐、Calibration selection、response summary 与 CSV provenance 仍使用真实且不复用的稳定 `event_id`。删除或重新排序 Event 只会改变显示序号，不会重编号 scientific/internal identity。Calibration 列表同样显示易读序号，并通过独立映射保存真正 event_id，不从显示文本反向解析。
+
+i-t 分析设置 footer 已从三个相互竞争横向空间的 `pack` widgets 改为两列 `grid`：左列用两行显示可换行 status/feedback，右列是固定 action area。wraplength 根据 footer 实际宽度和按钮 requested width 调整，因此 stale、validation error、长中文 Sample ID/Timeline 状态不会再把“开始正式 i-t Event 分析”推离可视区域。按钮在普通、stale、validation failure 和 analysis complete 状态保持可见且 enabled，仅在后台 busy 时 disabled。Workspace 自增显示编号语义刻意未改变。
 
 ## 安装与测试
 

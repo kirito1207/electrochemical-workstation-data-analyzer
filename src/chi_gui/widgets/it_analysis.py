@@ -18,6 +18,8 @@ from plotting.it_events import (ITResponseScatterPoint, build_it_calibration_fig
 
 
 IT_HOVER_RADIUS_PX = 10.0
+FOOTER_MIN_TEXT_WRAP_PX = 180
+FOOTER_INITIAL_TEXT_WRAP_PX = 430
 
 
 def available_it_result_plots(result) -> tuple[str, ...]:
@@ -35,6 +37,34 @@ def event_double_click_edits(column: str) -> bool:
     """Event ID is immutable; every other visible Event column opens the row editor."""
 
     return column in {"#2", "#3", "#4", "#5", "#6"}
+
+
+def event_display_rows(events) -> tuple[tuple[object, ...], ...]:
+    """Return presentation-only indices; Treeview iid remains the real event_id."""
+
+    return tuple((index, event.name, f"{event.time_s:.9g}",
+                  "" if event.value is None else f"{event.value:g}",
+                  event.unit or "", event.notes)
+                 for index, event in enumerate(events, start=1))
+
+
+def calibration_display_items(events) -> tuple[tuple[str, str], ...]:
+    """Map presentation labels to stable event_id without parsing display text."""
+
+    return tuple((event.event_id,
+                  f"{display_index} | {event.name} | {event.value:g} {event.unit or ''}")
+                 for display_index, event in enumerate(events, start=1)
+                 if event.value is not None)
+
+
+def analysis_footer_wraplength(total_width: int, action_width: int) -> int:
+    return max(FOOTER_MIN_TEXT_WRAP_PX, int(total_width) - int(action_width) - 24)
+
+
+def analysis_run_button_state(*, busy: bool) -> str:
+    """Keep reanalysis available for every non-busy workflow state."""
+
+    return "disabled" if busy else "normal"
 
 
 def nearest_it_response_point(series, axis, event_x: float, event_y: float,
@@ -63,6 +93,7 @@ class ITSettingsPanel(ttk.Frame):
         self.on_add_cursor_event = on_add_cursor_event
         self.on_run = on_run
         self._state = None
+        self._calibration_event_ids_by_index = ()
         self.columnconfigure(0, weight=1); self.rowconfigure(0, weight=1)
         panes = ttk.Panedwindow(self, orient="vertical"); panes.grid(row=0, column=0, sticky="nsew")
 
@@ -102,8 +133,8 @@ class ITSettingsPanel(ttk.Frame):
             context_bar, text="恢复使用默认 Timeline", command=self._restore_default
         )
         self._timeline_context_keys = {}
-        self.events = ttk.Treeview(event_frame, columns=("id", "name", "time", "value", "unit", "notes"), show="headings", height=6)
-        for key, label, width in (("id", "Event ID", 90), ("name", "Event", 130), ("time", "Time / s", 90),
+        self.events = ttk.Treeview(event_frame, columns=("index", "name", "time", "value", "unit", "notes"), show="headings", height=6)
+        for key, label, width in (("index", "#", 42), ("name", "Event", 130), ("time", "Time / s", 90),
                                   ("value", "Value", 80), ("unit", "Unit", 70), ("notes", "Notes", 180)):
             self.events.heading(key, text=label); self.events.column(key, width=width, stretch=key in {"name", "notes"})
         self.events.grid(row=1, column=0, columnspan=6, sticky="nsew")
@@ -136,10 +167,29 @@ class ITSettingsPanel(ttk.Frame):
         ttk.Button(settings, text="应用 Calibration 设置", command=self._set_calibration).grid(row=3, column=5, sticky="w")
         panes.add(settings, weight=2)
 
-        footer = ttk.Frame(self); footer.grid(row=1, column=0, sticky="ew", pady=(5, 0))
-        self.status = tk.StringVar(); ttk.Label(footer, textvariable=self.status, foreground="#174a7e", justify="left").pack(side="left", fill="x", expand=True)
-        self.feedback = tk.StringVar(); ttk.Label(footer, textvariable=self.feedback, foreground="#9a4d00", wraplength=560).pack(side="left", padx=6)
-        self.run_button = ttk.Button(footer, text="开始正式 i-t Event 分析", command=on_run); self.run_button.pack(side="right")
+        self.footer = ttk.Frame(self)
+        self.footer.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        self.footer.columnconfigure(0, weight=1, minsize=0)
+        self.footer.columnconfigure(1, weight=0)
+        self.status = tk.StringVar()
+        self.status_label = ttk.Label(
+            self.footer, textvariable=self.status, foreground="#174a7e", justify="left",
+            wraplength=FOOTER_INITIAL_TEXT_WRAP_PX,
+        )
+        self.status_label.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.feedback = tk.StringVar()
+        self.feedback_label = ttk.Label(
+            self.footer, textvariable=self.feedback, foreground="#9a4d00", justify="left",
+            wraplength=FOOTER_INITIAL_TEXT_WRAP_PX,
+        )
+        self.feedback_label.grid(row=1, column=0, sticky="ew", padx=(0, 8), pady=(2, 0))
+        self.footer_actions = ttk.Frame(self.footer)
+        self.footer_actions.grid(row=0, column=1, rowspan=2, sticky="e")
+        self.run_button = ttk.Button(
+            self.footer_actions, text="开始正式 i-t Event 分析", command=on_run
+        )
+        self.run_button.grid(row=0, column=0, sticky="e")
+        self.footer.bind("<Configure>", self._footer_resized, add="+")
 
     def render(self, state: ITWorkflowState, *, busy=False, workspace_token="default"):
         self._state = state
@@ -162,20 +212,27 @@ class ITSettingsPanel(ttk.Frame):
             else:
                 self.restore_default_button.pack(side="right")
         self.events.delete(*self.events.get_children())
-        for event in state.current_events:
-            self.events.insert("", "end", iid=event.event_id, values=(event.event_id, event.name, f"{event.time_s:.9g}",
-                               "" if event.value is None else f"{event.value:g}", event.unit or "", event.notes))
+        for event, values in zip(state.current_events, event_display_rows(state.current_events)):
+            self.events.insert("", "end", iid=event.event_id, values=values)
         self.tail.set(f"{state.tail_fraction:.6g}"); self.metric.set(state.analysis_metric)
         self.calibration_enabled.set(state.calibration_enabled); self.x_label.set(state.calibration_x_label); self.x_unit.set(state.calibration_x_unit)
         self.calibration_events.delete(0, "end")
-        numeric = [event for event in state.events if event.value is not None]
-        for index, event in enumerate(numeric):
-            self.calibration_events.insert("end", f"{event.event_id} | {event.name} | {event.value:g} {event.unit or ''}")
-            if event.event_id in state.calibration_event_ids:
-                self.calibration_events.selection_set(index)
+        calibration_items = calibration_display_items(state.events)
+        self._calibration_event_ids_by_index = tuple(event_id for event_id, _label in calibration_items)
+        for list_index, (event_id, label) in enumerate(calibration_items):
+            self.calibration_events.insert("end", label)
+            if event_id in state.calibration_event_ids:
+                self.calibration_events.selection_set(list_index)
         self.status.set("    ".join(workflow_status_lines(state)))
         self.feedback.set(state.feedback.text)
-        self.run_button.configure(state="disabled" if busy else "normal")
+        self.run_button.configure(state=analysis_run_button_state(busy=busy))
+
+    def _footer_resized(self, event):
+        wraplength = analysis_footer_wraplength(
+            int(getattr(event, "width", 0)), self.footer_actions.winfo_reqwidth()
+        )
+        self.status_label.configure(wraplength=wraplength)
+        self.feedback_label.configure(wraplength=wraplength)
 
     def _edit_metadata(self, event):
         if self._state is None: return
@@ -252,8 +309,8 @@ class ITSettingsPanel(ttk.Frame):
 
     def _set_calibration(self):
         if self._state is None: return
-        numeric = [event for event in self._state.events if event.value is not None]
-        ids = tuple(numeric[index].event_id for index in self.calibration_events.curselection())
+        ids = tuple(self._calibration_event_ids_by_index[index]
+                    for index in self.calibration_events.curselection())
         self.on_change("calibration", self.calibration_enabled.get(), ids, self.x_label.get(), self.x_unit.get())
 
 
@@ -352,5 +409,6 @@ class ITResultPlotPanel(ttk.Frame):
 
 
 __all__ = ["ITResultPlotPanel", "ITResultsPanel", "ITSettingsPanel",
-           "available_it_result_plots", "event_double_click_edits",
+           "analysis_footer_wraplength", "analysis_run_button_state", "available_it_result_plots",
+           "calibration_display_items", "event_display_rows", "event_double_click_edits",
            "nearest_it_response_point", "normalize_it_result_plot"]

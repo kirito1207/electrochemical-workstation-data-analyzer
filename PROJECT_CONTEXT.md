@@ -4,7 +4,7 @@
 
 Electrochemical Workstation Data Analyzer is a desktop-oriented electrochemical data analysis project. Its repository-level identity is generic, while its currently validated native binary parser is deliberately narrower: real-file validation primarily covers CH Instruments CHI760E Linear Sweep Voltammetry (LSV) and Amperometric i-t Curve data. The project must not claim support for every workstation vendor or describe the parser as universal.
 
-The current development state is **Stage 5.3.1.1**, hardening Generic i-t Event GUI editing, CJK plotting, calibration-aware presentation, and per-sample Timeline overrides while preserving all scientific formulas.
+The current development state is **Stage 5.3.1.2**, separating Event display indices from stable internal identity and stabilizing the i-t analysis footer while preserving all scientific formulas.
 
 ## Architecture
 
@@ -61,6 +61,10 @@ The formal Generic i-t GUI now provides Sample ID/Group/Notes metadata, a user-c
 i-t Timeline inheritance deliberately has only two levels: one Workspace-local Default Timeline plus optional per-sample overrides. There is no Group-level Timeline. Overrides are keyed by stable canonical record identity rather than editable Sample ID, are initially copied from Default with logical event_id values preserved, and then evolve independently. Default and every override have separate confirmation states; an existing unconfirmed override blocks formal analysis instead of silently falling back. Include=False preserves its override, record removal cleans the orphan, and Sample ID changes do not detach it. Formal orchestration chooses the confirmed Timeline per record and aligns responses/summaries/calibration by event_id, never by row index.
 
 All scientific figures share one CJK-capable Matplotlib font policy. Windows prefers Microsoft YaHei/SimHei without bundling font files. The result-plot selector exposes Calibration only when the current completed result actually contains calibration output and safely falls back to Raw + Events if a prior selection becomes unavailable.
+
+An Event display index is not its `event_id`. The GUI derives `1..N` from the current time-sorted Timeline only for presentation. Stable `event_id` remains the immutable scientific/internal identity used for Treeview iid, Default/override alignment, Calibration selections, response summaries, stale signatures, and export provenance; deleted IDs are not reused and display reordering never renumbers them. Workspace display numbering remains a separate UI convention and is unchanged.
+
+The i-t settings footer reserves an independent action column for the run button. Status and feedback occupy a bounded, wrapping text column, so long stale or validation messages cannot displace the action. The run action stays available for correction/reanalysis and is disabled only while background work is busy.
 
 The existing `ComparisonDefinition` remains the explicit pairwise contract between any two Groups. Omnibus results are stored separately and must not be inserted into pairwise rows. Do not add Games–Howell, Tukey, Dunn, paired/repeated-measures, or mixed-effects tests without a separate scientific/statistical design discussion.
 
