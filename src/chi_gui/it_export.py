@@ -42,7 +42,7 @@ def export_it_result(result: ITEventBatchResult, output_base: str | Path) -> ITE
         ("raw_with_events", build_it_event_figure(result)),
         ("event_responses", build_it_response_figure(result)),
     )
-    if result.calibration_selection is not None:
+    if any(item.calibration is not None for item in result.files):
         figures += (("calibration", build_it_calibration_figure(result)),)
     try:
         for name, figure in figures:

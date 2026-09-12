@@ -5,6 +5,8 @@ from __future__ import annotations
 import matplotlib.pyplot as plt
 import re
 
+from .font_config import configure_plotting_fonts
+
 
 GENERIC_PALETTE = (
     "#0072B2", "#D55E00", "#009E73", "#CC79A7",
@@ -41,9 +43,9 @@ def potential_label(value: float) -> str:
 
 
 def new_figure(*, width: float = 6.2, height: float = 4.4):
+    configure_plotting_fonts()
     plt.rcParams.update(
         {
-            "font.family": "DejaVu Sans",
             "font.size": 9,
             "axes.labelsize": 10,
             "axes.titlesize": 11,

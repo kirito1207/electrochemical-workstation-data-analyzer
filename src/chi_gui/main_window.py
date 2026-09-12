@@ -24,6 +24,7 @@ from .layout import (
     PARAMETER_VALUE_WRAP_PX,
 )
 from .lsv_export import export_lsv_result, open_output_directory
+from .matplotlib_config import configure_gui_matplotlib_fonts
 from .it_export import export_it_result
 from .it_workflow import (ITAnalysisCompleted, execute_it_analysis)
 from .lsv_workflow import (
@@ -45,6 +46,9 @@ WINDOW_TITLE = "电化学工作站数据分析工具"
 
 class MainWindow:
     def __init__(self, root: tk.Tk):
+        # MainWindow is also instantiated directly by tests and embedders, so
+        # configure fonts before PlotPreview creates its first Figure.
+        configure_gui_matplotlib_fonts()
         self.root = root
         self.controller = GUIController()
         self.workspace_manager = WorkspaceManager()
@@ -863,6 +867,13 @@ class MainWindow:
                 event_id, time_s, name, value, unit, notes = values
                 workflow.edit_event(event_id, time_s=time_s, name=name, value=value, unit=unit, notes=notes)
             elif action == "delete_events": workflow.delete_events(values[0])
+            elif action == "timeline_context": workflow.select_timeline_context(values[0])
+            elif action == "create_override": workflow.create_sample_override(values[0])
+            elif action == "restore_default": workflow.restore_default_timeline(values[0])
+            elif action == "inherited_timeline_blocked": workflow.set_feedback(
+                "warning", "当前样本正在使用默认 Timeline",
+                ("请先创建样本专用 Timeline，或切换到默认 Timeline 编辑。",),
+            )
             elif action == "response":
                 workflow.set_tail_fraction(values[0]); workflow.set_metric(values[1])
             elif action == "calibration": workflow.set_calibration(*values)
@@ -895,7 +906,8 @@ class MainWindow:
             selected_key=self.selected_by_route.get("i-t"),
         )
         readings = build_cursor_readings(self.state.records, collection, cursor.requested_x)
-        preferred = next((row for row in readings.readings if row.record_key == collection.selected_key and row.available), None)
+        target_key = self.workspace.it_workflow.current_timeline_record_key or collection.selected_key
+        preferred = next((row for row in readings.readings if row.record_key == target_key and row.available), None)
         preferred = preferred or next((row for row in readings.readings if row.available), None)
         actual_time = preferred.actual_sampled_x if preferred is not None else None
         if actual_time is None:

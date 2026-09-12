@@ -4,7 +4,7 @@
 
 Electrochemical Workstation Data Analyzer is a desktop-oriented electrochemical data analysis project. Its repository-level identity is generic, while its currently validated native binary parser is deliberately narrower: real-file validation primarily covers CH Instruments CHI760E Linear Sweep Voltammetry (LSV) and Amperometric i-t Curve data. The project must not claim support for every workstation vendor or describe the parser as universal.
 
-The current development state is **Stage 5.3.1**, connecting the Generic i-t Event backend to the desktop GUI while preserving all prior LSV stages and historical scientific regressions.
+The current development state is **Stage 5.3.1.1**, hardening Generic i-t Event GUI editing, CJK plotting, calibration-aware presentation, and per-sample Timeline overrides while preserving all scientific formulas.
 
 ## Architecture
 
@@ -57,6 +57,10 @@ Formal i-t Event times must be user-confirmed. Cursor readings may seed an edita
 ## Known follow-up work
 
 The formal Generic i-t GUI now provides Sample ID/Group/Notes metadata, a user-confirmed arbitrary Event name/time/value/unit/notes Timeline, cursor-assisted draft creation, window-response settings, result tables/plots, and export. Calibration is optional and off by default; numeric Events are never selected automatically. The GUI intentionally exposes only the default tail-fraction policy in Stage 5.3.1, while the backend retains explicit-window support. It does not expose a fixed Concentration/µM schema.
+
+i-t Timeline inheritance deliberately has only two levels: one Workspace-local Default Timeline plus optional per-sample overrides. There is no Group-level Timeline. Overrides are keyed by stable canonical record identity rather than editable Sample ID, are initially copied from Default with logical event_id values preserved, and then evolve independently. Default and every override have separate confirmation states; an existing unconfirmed override blocks formal analysis instead of silently falling back. Include=False preserves its override, record removal cleans the orphan, and Sample ID changes do not detach it. Formal orchestration chooses the confirmed Timeline per record and aligns responses/summaries/calibration by event_id, never by row index.
+
+All scientific figures share one CJK-capable Matplotlib font policy. Windows prefers Microsoft YaHei/SimHei without bundling font files. The result-plot selector exposes Calibration only when the current completed result actually contains calibration output and safely falls back to Raw + Events if a prior selection becomes unavailable.
 
 The existing `ComparisonDefinition` remains the explicit pairwise contract between any two Groups. Omnibus results are stored separately and must not be inserted into pairwise rows. Do not add Games–Howell, Tukey, Dunn, paired/repeated-measures, or mixed-effects tests without a separate scientific/statistical design discussion.
 

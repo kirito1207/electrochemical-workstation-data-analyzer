@@ -20,6 +20,23 @@ from plotting.it_events import (ITResponseScatterPoint, build_it_calibration_fig
 IT_HOVER_RADIUS_PX = 10.0
 
 
+def available_it_result_plots(result) -> tuple[str, ...]:
+    plots = ("Raw + Events", "Event Response")
+    has_calibration = result is not None and any(item.calibration is not None for item in result.files)
+    return plots + (("Calibration",) if has_calibration else ())
+
+
+def normalize_it_result_plot(selected: str, result) -> str:
+    choices = available_it_result_plots(result)
+    return selected if selected in choices else "Raw + Events"
+
+
+def event_double_click_edits(column: str) -> bool:
+    """Event ID is immutable; every other visible Event column opens the row editor."""
+
+    return column in {"#2", "#3", "#4", "#5", "#6"}
+
+
 def nearest_it_response_point(series, axis, event_x: float, event_y: float,
                               radius_px: float = IT_HOVER_RADIUS_PX):
     if not (isfinite(event_x) and isfinite(event_y)):
@@ -49,7 +66,7 @@ class ITSettingsPanel(ttk.Frame):
         self.columnconfigure(0, weight=1); self.rowconfigure(0, weight=1)
         panes = ttk.Panedwindow(self, orient="vertical"); panes.grid(row=0, column=0, sticky="nsew")
 
-        metadata_frame = ttk.LabelFrame(panes, text="① 样本信息（i-t 不使用 Bare / Material）")
+        metadata_frame = ttk.LabelFrame(panes, text="① 样本信息")
         metadata_frame.columnconfigure(0, weight=1); metadata_frame.rowconfigure(0, weight=1)
         self.metadata = ttk.Treeview(metadata_frame, columns=("include", "file", "sample", "group", "notes"), show="headings", height=5)
         for key, label, width in (("include", "纳入", 55), ("file", "文件", 210),
@@ -63,17 +80,40 @@ class ITSettingsPanel(ttk.Frame):
         panes.add(metadata_frame, weight=2)
 
         event_frame = ttk.LabelFrame(panes, text="② Event Timeline（用户明确定义并确认）")
-        event_frame.columnconfigure(0, weight=1); event_frame.rowconfigure(0, weight=1)
+        event_frame.columnconfigure(0, weight=1); event_frame.rowconfigure(1, weight=1)
+        context_bar = ttk.Frame(event_frame)
+        context_bar.grid(row=0, column=0, columnspan=6, sticky="ew", pady=(2, 4))
+        ttk.Label(context_bar, text="应用对象：").pack(side="left")
+        self.timeline_context = tk.StringVar(value="默认 Timeline")
+        self.timeline_context_combo = ttk.Combobox(
+            context_bar, textvariable=self.timeline_context, state="readonly", width=34
+        )
+        self.timeline_context_combo.pack(side="left")
+        self.timeline_context_combo.bind("<<ComboboxSelected>>", self._select_timeline_context)
+        self.timeline_context_status = tk.StringVar(value="当前：默认 Timeline")
+        ttk.Label(context_bar, textvariable=self.timeline_context_status, foreground="#355f7c").pack(
+            side="left", padx=8
+        )
+        self.create_override_button = ttk.Button(
+            context_bar, text="创建样本专用 Timeline", command=self._create_override
+        )
+        self.create_override_button.pack(side="right")
+        self.restore_default_button = ttk.Button(
+            context_bar, text="恢复使用默认 Timeline", command=self._restore_default
+        )
+        self._timeline_context_keys = {}
         self.events = ttk.Treeview(event_frame, columns=("id", "name", "time", "value", "unit", "notes"), show="headings", height=6)
         for key, label, width in (("id", "Event ID", 90), ("name", "Event", 130), ("time", "Time / s", 90),
                                   ("value", "Value", 80), ("unit", "Unit", 70), ("notes", "Notes", 180)):
             self.events.heading(key, text=label); self.events.column(key, width=width, stretch=key in {"name", "notes"})
-        self.events.grid(row=0, column=0, columnspan=6, sticky="nsew")
-        ttk.Button(event_frame, text="手动添加", command=self._add_event).grid(row=1, column=0, sticky="w", pady=3)
-        ttk.Button(event_frame, text="从当前游标添加草稿", command=on_add_cursor_event).grid(row=1, column=1, sticky="w")
-        ttk.Button(event_frame, text="编辑", command=self._edit_event).grid(row=1, column=2, sticky="w")
-        ttk.Button(event_frame, text="删除", command=self._delete_events).grid(row=1, column=3, sticky="w")
-        ttk.Button(event_frame, text="确认 Timeline", command=on_confirm_timeline).grid(row=1, column=5, sticky="e")
+        self.events.grid(row=1, column=0, columnspan=6, sticky="nsew")
+        self.events.bind("<Double-1>", self._double_edit_event)
+        ttk.Button(event_frame, text="手动添加", command=self._add_event).grid(row=2, column=0, sticky="w", pady=3)
+        ttk.Button(event_frame, text="从当前游标添加草稿", command=on_add_cursor_event).grid(row=2, column=1, sticky="w")
+        self.edit_event_button = ttk.Button(event_frame, text="编辑", command=self._edit_event)
+        self.edit_event_button.grid(row=2, column=2, sticky="w")
+        ttk.Button(event_frame, text="删除", command=self._delete_events).grid(row=2, column=3, sticky="w")
+        ttk.Button(event_frame, text="确认 Timeline", command=on_confirm_timeline).grid(row=2, column=5, sticky="e")
         panes.add(event_frame, weight=3)
 
         settings = ttk.LabelFrame(panes, text="③ 响应设置与 ④ 可选 Calibration")
@@ -106,8 +146,23 @@ class ITSettingsPanel(ttk.Frame):
         self.metadata.delete(*self.metadata.get_children())
         for row in state.metadata_rows:
             self.metadata.insert("", "end", iid=row.record_key, values=("✓" if row.include else "—", row.file_name, row.sample_id, row.group, row.notes))
+        contexts = state.included_timeline_contexts
+        self._timeline_context_keys = {label: key for key, label in contexts}
+        labels = tuple(label for _key, label in contexts)
+        self.timeline_context_combo.configure(values=labels)
+        selected_label = next((label for key, label in contexts
+                               if key == state.current_timeline_record_key), "默认 Timeline")
+        self.timeline_context.set(selected_label)
+        self.timeline_context_status.set(f"当前：{state.timeline_context_status}")
+        self.create_override_button.pack_forget()
+        self.restore_default_button.pack_forget()
+        if state.current_timeline_record_key is not None:
+            if state.current_override is None:
+                self.create_override_button.pack(side="right")
+            else:
+                self.restore_default_button.pack(side="right")
         self.events.delete(*self.events.get_children())
-        for event in state.events:
+        for event in state.current_events:
             self.events.insert("", "end", iid=event.event_id, values=(event.event_id, event.name, f"{event.time_s:.9g}",
                                "" if event.value is None else f"{event.value:g}", event.unit or "", event.notes))
         self.tail.set(f"{state.tail_fraction:.6g}"); self.metric.set(state.analysis_metric)
@@ -147,17 +202,46 @@ class ITSettingsPanel(ttk.Frame):
             self._state.set_feedback("warning", "Event 未保存", ("Time 与非空 Value 必须是数值。",)); self.feedback.set(self._state.feedback.text); return None
 
     def _add_event(self):
+        if not self._ensure_editable_context(): return
         values = self._event_values()
         if values is not None: self.on_change("add_event", *values)
 
     def _edit_event(self):
-        if self._state is None or not self.events.selection(): return
-        event = next(row for row in self._state.events if row.event_id == self.events.selection()[0])
+        if self._state is None or not self.events.selection() or not self._ensure_editable_context(): return
+        event = next(row for row in self._state.current_events if row.event_id == self.events.selection()[0])
         values = self._event_values(event)
         if values is not None: self.on_change("edit_event", event.event_id, *values)
 
+    def _double_edit_event(self, event):
+        row = self.events.identify_row(event.y)
+        column = self.events.identify_column(event.x)
+        if row and event_double_click_edits(column):
+            self.events.selection_set(row)
+            self.events.focus(row)
+            self._edit_event()
+            return "break"
+        return None
+
+    def _select_timeline_context(self, _event=None):
+        self.on_change("timeline_context", self._timeline_context_keys.get(self.timeline_context.get()))
+
+    def _create_override(self):
+        if self._state is not None and self._state.current_timeline_record_key is not None:
+            self.on_change("create_override", self._state.current_timeline_record_key)
+
+    def _restore_default(self):
+        if self._state is not None and self._state.current_timeline_record_key is not None:
+            self.on_change("restore_default", self._state.current_timeline_record_key)
+
     def _delete_events(self):
-        if self.events.selection(): self.on_change("delete_events", tuple(self.events.selection()))
+        if self.events.selection() and self._ensure_editable_context():
+            self.on_change("delete_events", tuple(self.events.selection()))
+
+    def _ensure_editable_context(self):
+        if self._state is not None and self._state.current_timeline_is_inherited:
+            self.on_change("inherited_timeline_blocked")
+            return False
+        return True
 
     def _set_response(self):
         try: fraction = float(self.tail.get())
@@ -183,13 +267,15 @@ class ITResultsPanel(ttk.Frame):
             "Event Summary": (("group", "Group"), ("event", "Event"), ("n", "n"), ("mean", "Mean"), ("sd", "SD"), ("sem", "SEM"), ("cv_percent", "CV%")),
             "Calibration": (("sample_id", "Sample ID"), ("metric", "Metric"), ("x_label", "x label"), ("x_unit", "x unit"), ("slope", "Slope"), ("intercept", "Intercept"), ("r_squared", "R²"), ("events", "Events"), ("method", "Method")),
         }
-        self.tables = {}
+        self.tables = {}; self.table_messages = {}
         for title, columns in definitions.items():
-            frame = ttk.Frame(self.notebook); frame.columnconfigure(0, weight=1); frame.rowconfigure(0, weight=1)
+            frame = ttk.Frame(self.notebook); frame.columnconfigure(0, weight=1); frame.rowconfigure(1, weight=1)
+            message = tk.StringVar()
+            ttk.Label(frame, textvariable=message, foreground="#355f7c").grid(row=0, column=0, sticky="w")
             tree = ttk.Treeview(frame, columns=tuple(key for key, _ in columns), show="headings")
             for key, label in columns: tree.heading(key, text=label); tree.column(key, width=105, stretch=True)
-            tree.grid(row=0, column=0, sticky="nsew"); ttk.Scrollbar(frame, orient="horizontal", command=tree.xview).grid(row=1, column=0, sticky="ew")
-            self.notebook.add(frame, text=title); self.tables[title] = tree
+            tree.grid(row=1, column=0, sticky="nsew"); ttk.Scrollbar(frame, orient="horizontal", command=tree.xview).grid(row=2, column=0, sticky="ew")
+            self.notebook.add(frame, text=title); self.tables[title] = tree; self.table_messages[title] = message
         warnings_frame = ttk.Frame(self.notebook); warnings_frame.columnconfigure(0, weight=1); warnings_frame.rowconfigure(0, weight=1)
         self.warnings = tk.Text(warnings_frame, wrap="word"); self.warnings.grid(row=0, column=0, sticky="nsew")
         self.notebook.add(warnings_frame, text="Warnings / QC")
@@ -201,6 +287,10 @@ class ITResultsPanel(ttk.Frame):
             tree = self.tables[title]; tree.delete(*tree.get_children())
             if state.analysis_result:
                 for index, row in enumerate(getter(state.analysis_result)): tree.insert("", "end", iid=str(index), values=tuple(row.values()))
+        self.table_messages["Calibration"].set(
+            "" if state.analysis_result and any(item.calibration is not None for item in state.analysis_result.files)
+            else "本次分析未启用 Calibration。" if state.analysis_result else "尚未运行分析"
+        )
         self.warnings.delete("1.0", "end")
         if state.analysis_result:
             lines = ["原始 i-t 不平滑；Unavailable rows 保留；Calibration 仅使用用户显式选择的 Events。"]
@@ -215,8 +305,8 @@ class ITResultPlotPanel(ttk.Frame):
         self.state = None; self.figure = None; self.canvas = None; self.series = (); self.annotation = None
         toolbar = ttk.Frame(self); toolbar.grid(row=0, column=0, sticky="ew")
         self.plot_type = tk.StringVar(value="Raw + Events")
-        combo = ttk.Combobox(toolbar, textvariable=self.plot_type, state="readonly", values=("Raw + Events", "Event Response", "Calibration"), width=20)
-        combo.pack(side="left"); combo.bind("<<ComboboxSelected>>", lambda _e: self._changed())
+        self.plot_combo = ttk.Combobox(toolbar, textvariable=self.plot_type, state="readonly", width=20)
+        self.plot_combo.pack(side="left"); self.plot_combo.bind("<<ComboboxSelected>>", lambda _e: self._changed())
         ttk.Button(toolbar, text="导出当前完整分析结果", command=on_export).pack(side="right")
         ttk.Button(toolbar, text="打开结果文件夹", command=on_open_folder).pack(side="right", padx=5)
         self.host = ttk.Frame(self); self.host.grid(row=1, column=0, sticky="nsew")
@@ -224,13 +314,21 @@ class ITResultPlotPanel(ttk.Frame):
 
     def render(self, state: ITWorkflowState | None):
         self.state = state
-        if self.canvas: self.canvas.get_tk_widget().destroy(); self.canvas = None
+        for child in self.host.winfo_children():
+            child.destroy()
+        self.canvas = None
         if self.figure: plt.close(self.figure); self.figure = None
         self.series = (); self.annotation = None
         self.export_status.set(f"最近导出：{state.last_export_directory}" if state and state.last_export_directory else "尚未导出")
         if state is None or state.analysis_result is None:
+            self.plot_combo.configure(values=available_it_result_plots(None))
+            self.plot_type.set("Raw + Events")
             ttk.Label(self.host, text="完成正式 i-t Event 分析后可查看结果图。", padding=12).pack(); return
-        kind = state.selected_result_plot; self.plot_type.set(kind)
+        choices = available_it_result_plots(state.analysis_result)
+        self.plot_combo.configure(values=choices)
+        kind = normalize_it_result_plot(state.selected_result_plot, state.analysis_result)
+        state.selected_result_plot = kind
+        self.plot_type.set(kind)
         if kind == "Event Response": self.figure, self.series = build_it_response_figure(state.analysis_result, include_hover_metadata=True)
         elif kind == "Calibration": self.figure = build_it_calibration_figure(state.analysis_result)
         else: self.figure = build_it_event_figure(state.analysis_result)
@@ -253,4 +351,6 @@ class ITResultPlotPanel(ttk.Frame):
         self.canvas.draw_idle()
 
 
-__all__ = ["ITResultPlotPanel", "ITResultsPanel", "ITSettingsPanel", "nearest_it_response_point"]
+__all__ = ["ITResultPlotPanel", "ITResultsPanel", "ITSettingsPanel",
+           "available_it_result_plots", "event_double_click_edits",
+           "nearest_it_response_point", "normalize_it_result_plot"]

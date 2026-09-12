@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.3.1
+# Electrochemical Workstation Data Analyzer — Stage 5.3.1.1
 
-当前开发状态：**Stage 5.3.1（Generic i-t Event Analysis GUI）**。
+当前开发状态：**Stage 5.3.1.1（Generic i-t Event GUI usability and per-sample timeline override）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -321,6 +321,16 @@ Baseline 明确定义为记录起点至首个 Event；每个 Event 从自身时�
 Calibration 不会因 Event 带 numeric value 而自动开启或自动纳入。用户必须显式启用、填写通用 x label/unit，并逐项选择 Events；缺失数值、单位不完全一致或不足两个不同 x 值均由 backend validation 阻止，不进行单位换算。结果区直接展示 backend 的 Event Response、Event Summary、可选 Calibration 和 warnings/QC；图形包括完整 raw curves + Event markers、individual response scatter + group mean ± sample SD，以及通用 OLS calibration。individual response hover 使用正式 Sample ID，不从文件名推断。
 
 每个 Workspace 分别保存 i-t metadata、Event Timeline、settings、result、plot 与 export 状态；i-t 与 LSV workflow 也互相隔离。修改 metadata、Timeline、tail fraction、metric 或 Calibration 会把既有结果标为 stale，重新分析前禁止以新设置导出旧结果。Stage 5.3.1 GUI 暂不暴露 explicit-window editor，但 Stage 5.3 backend 的 explicit `ResponseWindow` 能力继续保留。
+
+## Stage 5.3.1.1 i-t GUI usability and sample Timeline overrides
+
+Event Timeline 行现在支持双击任意 Event/Time/Value/Unit/Notes 列打开整行编辑器，原“编辑”按钮继续保留；Event ID 是稳定内部 identity，不能由普通编辑操作改变。样本信息主标题精简为“① 样本信息”。
+
+i-t Timeline 采用两层且仅两层的继承模型：一个 Workspace-local **Default Timeline**，加上以稳定 canonical `record_key` 关联的 optional per-sample override，不存在 Group-level Timeline。没有 override 的 included record 继承 Default；首次创建 override 时完整复制 Default Events 并保留 event_id/name/value/unit/notes，之后通常只需调整实际 time。override 内容独立于 Default，修改 Default 不覆盖既有 override；恢复默认会删除该 record 的 override。Sample ID 政名不会改变绑定，Include=False 暂时保留 override，删除 record 则清理 orphan。
+
+Default 与每个 override 分别确认。已创建但未确认的 override 不会静默 fallback；正式分析会阻止并指出对应 Sample。GUI orchestration 按 record 选择 confirmed Timeline，然后逐条复用 Stage 5.3 `analyze_it_events()`，最终继续用 backend `summarize_event_responses()` 按 event_id 汇总。某个 override 删除 Event 不会令后续 Event 按行号错位。Calibration selection 仍是 Workspace-level logical event_id 集合；不同 Sample 可拥有不同 Event time，但必须保留被选择 Event 的 compatible value/unit。
+
+所有通过 `plotting.common.new_figure()` 创建的 LSV/i-t 科研图与 GUI raw preview 现在共享同一个 CJK font policy；Windows 优先 Microsoft YaHei/SimHei，再使用跨平台 fallback，不提交字体文件。Calibration 未产生结果时，结果图 selector 只显示 Raw + Events 和 Event Response；只有本次 result 实际包含 calibration 才显示 Calibration。若旧选择已失效会自动回退到 Raw + Events，且 disabled Calibration 不构建或导出 calibration figure/CSV。
 
 ## 安装与测试
 

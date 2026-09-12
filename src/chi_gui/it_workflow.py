@@ -14,7 +14,8 @@ from analysis.it_events import (
     ITEventBatchResult,
     ITEventInput,
     PlateauPolicy,
-    analyze_it_event_batch,
+    analyze_it_events,
+    summarize_event_responses,
 )
 from chi_parser import ITData
 
@@ -32,10 +33,23 @@ class ITMetadataDraftRow:
     notes: str = ""
 
 
+@dataclass(slots=True)
+class SampleTimelineOverride:
+    """One record-local Timeline draft; keyed externally by stable record_key."""
+
+    events: list[Event] = field(default_factory=list)
+    confirmed: bool = False
+
+    def timeline(self, source: str) -> EventTimeline:
+        return EventTimeline(tuple(self.events), self.confirmed, source)
+
+
 @dataclass(frozen=True, slots=True)
 class ITAnalysisRequest:
+    record_keys: tuple[str, ...]
     inputs: tuple[ITEventInput, ...]
     timeline: EventTimeline
+    record_timelines: tuple[EventTimeline, ...]
     metric: str
     policy: PlateauPolicy
     calibration_selection: CalibrationSelection | None
@@ -57,8 +71,10 @@ def _event_signature(event: Event) -> tuple[object, ...]:
 class ITWorkflowState:
     metadata_rows: list[ITMetadataDraftRow] = field(default_factory=list)
     metadata_confirmed: bool = False
-    events: list[Event] = field(default_factory=list)
+    events: list[Event] = field(default_factory=list)  # Default Timeline
     timeline_confirmed: bool = False
+    sample_timeline_overrides: dict[str, SampleTimelineOverride] = field(default_factory=dict)
+    current_timeline_record_key: str | None = None
     tail_fraction: float = 0.20
     analysis_metric: str = "signed"
     calibration_enabled: bool = False
@@ -78,18 +94,64 @@ class ITWorkflowState:
     def set_feedback(self, level: str, title: str, details: Iterable[str] = ()) -> None:
         self.feedback = WorkflowFeedback(level, title, tuple(details))
 
+    @property
+    def timeline(self) -> EventTimeline:
+        return EventTimeline(tuple(self.events), self.timeline_confirmed, "GUI Default Event Timeline")
+
+    @property
+    def current_override(self) -> SampleTimelineOverride | None:
+        return (None if self.current_timeline_record_key is None else
+                self.sample_timeline_overrides.get(self.current_timeline_record_key))
+
+    @property
+    def current_events(self) -> list[Event]:
+        override = self.current_override
+        return override.events if override is not None else self.events
+
+    @property
+    def current_timeline_confirmed(self) -> bool:
+        override = self.current_override
+        return override.confirmed if override is not None else self.timeline_confirmed
+
+    @property
+    def current_timeline_is_inherited(self) -> bool:
+        return self.current_timeline_record_key is not None and self.current_override is None
+
+    @property
+    def timeline_context_status(self) -> str:
+        if self.current_timeline_record_key is None:
+            return "默认 Timeline"
+        row = self.metadata_row(self.current_timeline_record_key)
+        label = row.sample_id.strip() or row.file_name
+        kind = "继承默认 Timeline" if self.current_override is None else "样本专用 Timeline"
+        return f"样本 {label}：{kind}"
+
+    @property
+    def included_timeline_contexts(self) -> tuple[tuple[str | None, str], ...]:
+        return ((None, "默认 Timeline"),) + tuple(
+            (row.record_key, f"{row.sample_id.strip() or row.file_name} — {row.file_name} [{index}]")
+            for index, row in enumerate((row for row in self.metadata_rows if row.include), start=1)
+        )
+
+    def metadata_row(self, record_key: str) -> ITMetadataDraftRow:
+        return next(row for row in self.metadata_rows if row.record_key == record_key)
+
+    def select_timeline_context(self, record_key: str | None) -> None:
+        if record_key is not None and not any(row.record_key == record_key and row.include
+                                               for row in self.metadata_rows):
+            record_key = None
+        self.current_timeline_record_key = record_key
+
     def current_signature(self) -> tuple[object, ...]:
         return (
             tuple((r.record_key, r.include, r.sample_id, r.group, r.notes) for r in self.metadata_rows),
             self.metadata_confirmed,
-            tuple(_event_signature(event) for event in self.events),
-            self.timeline_confirmed,
-            self.tail_fraction,
-            self.analysis_metric,
-            self.calibration_enabled,
-            self.calibration_event_ids,
-            self.calibration_x_label,
-            self.calibration_x_unit,
+            tuple(_event_signature(event) for event in self.events), self.timeline_confirmed,
+            tuple(sorted((key, tuple(_event_signature(event) for event in override.events),
+                          override.confirmed)
+                         for key, override in self.sample_timeline_overrides.items())),
+            self.tail_fraction, self.analysis_metric, self.calibration_enabled,
+            self.calibration_event_ids, self.calibration_x_label, self.calibration_x_unit,
         )
 
     @property
@@ -100,15 +162,14 @@ class ITWorkflowState:
             return "设置已修改，当前结果已过期，需要重新分析"
         return "分析完成，结果与当前设置一致"
 
-    @property
-    def timeline(self) -> EventTimeline:
-        return EventTimeline(tuple(self.events), self.timeline_confirmed, "GUI user-confirmed Event Timeline")
-
     def _changed(self, *, metadata: bool = False, timeline: bool = False) -> None:
         if metadata:
             self.metadata_confirmed = False
         if timeline:
-            self.timeline_confirmed = False
+            if self.current_override is not None:
+                self.current_override.confirmed = False
+            else:
+                self.timeline_confirmed = False
         if self.analysis_result is not None:
             self.result_stale = True
         self.set_feedback("info", "设置已修改，请重新确认并运行分析")
@@ -118,26 +179,27 @@ class ITWorkflowState:
         existing = {row.record_key: row for row in self.metadata_rows}
         keys = {record.key for record in usable}
         changed = set(existing) != keys
-        self.metadata_rows = [
-            existing.get(record.key) or ITMetadataDraftRow(
-                record.key, record.path.name, sample_id=record.path.stem
-            )
-            for record in usable
-        ]
+        self.metadata_rows = [existing.get(record.key) or ITMetadataDraftRow(
+            record.key, record.path.name, sample_id=record.path.stem) for record in usable]
+        self.sample_timeline_overrides = {
+            key: override for key, override in self.sample_timeline_overrides.items() if key in keys
+        }
+        if self.current_timeline_record_key not in keys:
+            self.current_timeline_record_key = None
         if changed:
             self.metadata_confirmed = False
             if self.analysis_result is not None:
                 self.result_stale = True
-            self.set_feedback(
-                "warning", "i-t 文件列表已变化，请检查并确认样本信息"
-                if usable else "尚未导入可分析的 i-t 文件"
-            )
+            self.set_feedback("warning", "i-t 文件列表已变化，请检查并确认样本信息"
+                              if usable else "尚未导入可分析的 i-t 文件")
 
     def update_metadata(self, record_key: str, field_name: str, value: object) -> None:
         if field_name not in {"include", "sample_id", "group", "notes"}:
             raise ValueError(f"Unsupported i-t metadata field: {field_name}")
-        row = next(row for row in self.metadata_rows if row.record_key == record_key)
+        row = self.metadata_row(record_key)
         setattr(row, field_name, bool(value) if field_name == "include" else str(value))
+        if not row.include and self.current_timeline_record_key == record_key:
+            self.current_timeline_record_key = None
         self._changed(metadata=True)
 
     def confirm_metadata(self) -> None:
@@ -157,8 +219,32 @@ class ITWorkflowState:
         self.metadata_confirmed = True
         self.set_feedback("success", f"样本信息已确认：{len(included)} 个文件")
 
+    def create_sample_override(self, record_key: str) -> SampleTimelineOverride:
+        self.metadata_row(record_key)
+        if record_key not in self.sample_timeline_overrides:
+            self.sample_timeline_overrides[record_key] = SampleTimelineOverride(list(self.events), False)
+            self.current_timeline_record_key = record_key
+            if self.analysis_result is not None:
+                self.result_stale = True
+            self.set_feedback("info", "已从默认 Timeline 创建样本专用副本；请编辑并确认")
+        return self.sample_timeline_overrides[record_key]
+
+    def restore_default_timeline(self, record_key: str) -> None:
+        if self.sample_timeline_overrides.pop(record_key, None) is not None:
+            self.current_timeline_record_key = record_key
+            if self.analysis_result is not None:
+                self.result_stale = True
+            self.set_feedback("info", "已恢复使用默认 Timeline；设置已改变，请按需重新分析")
+
+    def _editable_events(self) -> list[Event]:
+        if self.current_timeline_is_inherited:
+            raise ValueError("当前样本正在使用默认 Timeline。请先创建样本专用 Timeline，或切换到默认 Timeline 编辑。")
+        return self.current_events
+
     def _new_event_id(self) -> str:
         used = {event.event_id for event in self.events}
+        used.update(event.event_id for override in self.sample_timeline_overrides.values()
+                    for event in override.events)
         while f"event_{self._next_event_number}" in used:
             self._next_event_number += 1
         value = f"event_{self._next_event_number}"
@@ -167,57 +253,82 @@ class ITWorkflowState:
 
     def add_event(self, *, time_s: float, name: str, value: float | None = None,
                   unit: str | None = None, notes: str = "", event_id: str | None = None) -> Event:
+        target = self._editable_events()
         if not math.isfinite(float(time_s)):
             raise ValueError("Event 时间必须是有限数值。")
-        if any(event.time_s == float(time_s) for event in self.events):
+        if any(event.time_s == float(time_s) for event in target):
             raise ValueError("Event 时间不能重复；请编辑现有 Event 或选择其他时间。")
         if not name.strip():
             raise ValueError("Event 名称不能为空。")
         event = Event(event_id or self._new_event_id(), float(time_s), name.strip(), value,
                       unit.strip() if unit else None, notes.strip())
-        self.events.append(event)
-        self.events.sort(key=lambda row: row.time_s)
+        target.append(event)
+        target.sort(key=lambda row: row.time_s)
         self._changed(timeline=True)
         return event
 
     def edit_event(self, event_id: str, **changes: object) -> Event:
-        old = next(event for event in self.events if event.event_id == event_id)
-        values = {
-            "time_s": old.time_s, "name": old.name, "value": old.value,
-            "unit": old.unit, "notes": old.notes,
-        }
+        target = self._editable_events()
+        old = next(event for event in target if event.event_id == event_id)
+        values = {"time_s": old.time_s, "name": old.name, "value": old.value,
+                  "unit": old.unit, "notes": old.notes}
         values.update(changes)
         time_s = float(values["time_s"])
-        if any(event.event_id != event_id and event.time_s == time_s for event in self.events):
+        if any(event.event_id != event_id and event.time_s == time_s for event in target):
             raise ValueError("Event 时间不能重复；请编辑现有 Event 或选择其他时间。")
         if not str(values["name"]).strip():
             raise ValueError("Event 名称不能为空。")
         replacement = Event(event_id, time_s, str(values["name"]).strip(), values["value"],
                             str(values["unit"]).strip() if values["unit"] else None,
                             str(values["notes"]).strip())
-        self.events = [replacement if event.event_id == event_id else event for event in self.events]
-        self.events.sort(key=lambda row: row.time_s)
+        target[:] = [replacement if event.event_id == event_id else event for event in target]
+        target.sort(key=lambda row: row.time_s)
         self._changed(timeline=True)
         return replacement
 
     def delete_events(self, event_ids: Iterable[str]) -> None:
+        target = self._editable_events()
         removed = set(event_ids)
         if removed:
-            self.events = [event for event in self.events if event.event_id not in removed]
-            self.calibration_event_ids = tuple(value for value in self.calibration_event_ids if value not in removed)
+            target[:] = [event for event in target if event.event_id not in removed]
+            if self.current_timeline_record_key is None:
+                self.calibration_event_ids = tuple(value for value in self.calibration_event_ids
+                                                   if value not in removed)
             self._changed(timeline=True)
 
     def confirm_timeline(self, records: Iterable[FileRecord]) -> EventTimeline:
-        if not self.events:
+        if self.current_timeline_is_inherited:
+            raise GUIWorkflowValidationError((
+                "当前样本正在继承默认 Timeline；请切换到默认 Timeline 确认，或先创建样本专用 Timeline。",
+            ))
+        target = self.current_events
+        if not target:
             raise GUIWorkflowValidationError(("Event Timeline 为空；仅可进行 raw preview，不能正式分析。",))
-        timeline = EventTimeline(tuple(self.events), True, "GUI user-confirmed Event Timeline")
+        source = "GUI Default Event Timeline"
+        start = end = None
+        if self.current_timeline_record_key is not None:
+            source = f"GUI sample override: {self.current_timeline_record_key}"
+            by_key = {record.key: record for record in records}
+            record = by_key.get(self.current_timeline_record_key)
+            if record is None or not isinstance(record.data, ITData):
+                raise GUIWorkflowValidationError(("当前样本专用 Timeline 无法定位对应 i-t record。",))
+            start, end = record.data.actual_first_time_s, record.data.actual_last_time_s
+        timeline = EventTimeline(tuple(target), True, source)
         try:
-            timeline.validate()
+            timeline.validate(recording_start_s=start, recording_end_s=end)
         except EventAnalysisError as error:
             raise GUIWorkflowValidationError((str(error),)) from error
-        self.timeline_confirmed = True
-        self.set_feedback("success", f"Event Timeline 已确认：{len(self.events)} 个 Event")
-        return self.timeline
+        if self.current_override is not None:
+            self.current_override.confirmed = True
+        else:
+            self.timeline_confirmed = True
+        self.set_feedback("success", f"{self.timeline_context_status} 已确认：{len(target)} 个 Event")
+        return timeline
+
+    def timeline_for_record_key(self, record_key: str) -> EventTimeline:
+        override = self.sample_timeline_overrides.get(record_key)
+        return (override.timeline(f"GUI sample override: {record_key}")
+                if override is not None else self.timeline)
 
     def set_tail_fraction(self, value: float) -> None:
         value = float(value)
@@ -249,16 +360,16 @@ class ITWorkflowState:
             self.set_feedback("warning", "无法开始正式分析", errors)
             raise GUIWorkflowValidationError(errors)
         by_key = {record.key: record for record in records}
-        inputs = tuple(
-            ITEventInput(by_key[row.record_key].data, row.sample_id.strip(), row.group.strip(), True, row.notes)
-            for row in self.metadata_rows if row.include
-        )
-        calibration = None
-        if self.calibration_enabled:
-            calibration = CalibrationSelection(
-                self.calibration_event_ids, self.calibration_x_label, self.calibration_x_unit
-            )
-        return ITAnalysisRequest(inputs, self.timeline, self.analysis_metric,
+        included = tuple(row for row in self.metadata_rows if row.include)
+        inputs = tuple(ITEventInput(by_key[row.record_key].data, row.sample_id.strip(),
+                                    row.group.strip(), True, row.notes) for row in included)
+        timelines = tuple(self.timeline_for_record_key(row.record_key) for row in included)
+        calibration = (CalibrationSelection(self.calibration_event_ids,
+                                            self.calibration_x_label,
+                                            self.calibration_x_unit)
+                       if self.calibration_enabled else None)
+        return ITAnalysisRequest(tuple(row.record_key for row in included), inputs, self.timeline,
+                                 timelines, self.analysis_metric,
                                  PlateauPolicy(fraction=self.tail_fraction), calibration,
                                  self.current_signature())
 
@@ -283,36 +394,46 @@ def validate_it_workflow(workflow: ITWorkflowState, records: Iterable[FileRecord
     errors: list[str] = []
     if not workflow.metadata_confirmed:
         errors.append("样本信息尚未由用户确认。")
-    if not workflow.timeline_confirmed:
-        errors.append("Event Timeline 尚未由用户确认。")
-    if not workflow.events:
-        errors.append("Event Timeline 为空；不能运行正式 Event 分析。")
+    included = tuple(row for row in workflow.metadata_rows if row.include)
+    by_key = {record.key: record for record in records}
+    for row in included:
+        timeline = workflow.timeline_for_record_key(row.record_key)
+        if row.record_key in workflow.sample_timeline_overrides and not timeline.user_confirmed:
+            errors.append(f"Sample {row.sample_id.strip() or row.file_name} 的样本专用 Timeline 尚未确认。")
+        elif row.record_key not in workflow.sample_timeline_overrides and not workflow.timeline_confirmed:
+            errors.append("默认 Event Timeline 尚未由用户确认。")
+        if not timeline.events:
+            errors.append(f"Sample {row.sample_id.strip() or row.file_name} 的 Event Timeline 为空。")
+        record = by_key.get(row.record_key)
+        if record is None or not isinstance(record.data, ITData):
+            errors.append("已确认样本中存在当前 Workspace 无法定位的 i-t 文件。")
+        if workflow.calibration_enabled:
+            selection = CalibrationSelection(workflow.calibration_event_ids,
+                                             workflow.calibration_x_label,
+                                             workflow.calibration_x_unit)
+            try:
+                selection.validate(timeline)
+            except EventAnalysisError as error:
+                errors.append(f"Sample {row.sample_id.strip() or row.file_name}: {error}")
     try:
         PlateauPolicy(fraction=workflow.tail_fraction).validate()
     except EventAnalysisError as error:
         errors.append(str(error))
     if workflow.analysis_metric not in {"signed", "magnitude"}:
         errors.append("分析指标必须是 signed 或 magnitude。")
-    by_key = {record.key: record for record in records}
-    if any(row.include and (row.record_key not in by_key or not isinstance(by_key[row.record_key].data, ITData))
-           for row in workflow.metadata_rows):
-        errors.append("已确认样本中存在当前 Workspace 无法定位的 i-t 文件。")
-    if workflow.calibration_enabled:
-        selection = CalibrationSelection(workflow.calibration_event_ids,
-                                         workflow.calibration_x_label,
-                                         workflow.calibration_x_unit)
-        try:
-            selection.validate(workflow.timeline)
-        except EventAnalysisError as error:
-            errors.append(str(error))
     return tuple(dict.fromkeys(errors))
 
 
 def execute_it_analysis(request: ITAnalysisRequest) -> ITEventBatchResult:
-    return analyze_it_event_batch(
-        request.inputs, request.timeline, metric=request.metric, policy=request.policy,
-        calibration_selection=request.calibration_selection,
+    files = tuple(
+        analyze_it_events(item.data, timeline, sample_id=item.sample_id, group=item.group,
+                          metric=request.metric, policy=request.policy,
+                          calibration_selection=request.calibration_selection)
+        for item, timeline in zip(request.inputs, request.record_timelines)
     )
+    summaries = summarize_event_responses(row for item in files for row in item.responses)
+    return ITEventBatchResult(request.timeline, files, summaries, request.metric,
+                              request.calibration_selection)
 
 
 def response_display_rows(result: ITEventBatchResult) -> tuple[dict[str, object], ...]:
@@ -350,7 +471,7 @@ def calibration_display_rows(result: ITEventBatchResult) -> tuple[dict[str, obje
 def workflow_status_lines(workflow: ITWorkflowState) -> tuple[str, ...]:
     return (
         f"① 样本信息：{'已确认' if workflow.metadata_confirmed else '未确认'}",
-        f"② Event Timeline：{'已确认' if workflow.timeline_confirmed else '未确认'}（{len(workflow.events)}）",
+        f"② Default Timeline：{'已确认' if workflow.timeline_confirmed else '未确认'}；专用 {len(workflow.sample_timeline_overrides)}",
         f"③ 响应设置：尾段 {workflow.tail_fraction:.0%}；{workflow.analysis_metric}",
         f"④ Calibration：{'开启' if workflow.calibration_enabled else '关闭'}",
         f"⑤ 正式分析：{workflow.result_status}",
@@ -359,12 +480,13 @@ def workflow_status_lines(workflow: ITWorkflowState) -> tuple[str, ...]:
 
 def result_summary_text(result: ITEventBatchResult) -> str:
     groups = tuple(dict.fromkeys(item.group for item in result.files))
+    event_ids = tuple(dict.fromkeys(row.event_id for item in result.files for row in item.responses))
     calibration = "开启" if result.calibration_selection is not None else "关闭"
-    return (f"✓ 分析完成｜Files：{len(result.files)}｜Events：{len(result.timeline.events)}｜"
+    return (f"✓ 分析完成｜Files：{len(result.files)}｜Events：{len(event_ids)}｜"
             f"Groups：{len(groups)}｜指标：{result.analysis_metric}｜Calibration：{calibration}")
 
 
 __all__ = ["ITAnalysisCompleted", "ITAnalysisRequest", "ITMetadataDraftRow", "ITWorkflowState",
-           "calibration_display_rows", "execute_it_analysis", "response_display_rows",
-           "result_summary_text", "summary_display_rows", "validate_it_workflow",
-           "workflow_status_lines"]
+           "SampleTimelineOverride", "calibration_display_rows", "execute_it_analysis",
+           "response_display_rows", "result_summary_text", "summary_display_rows",
+           "validate_it_workflow", "workflow_status_lines"]
