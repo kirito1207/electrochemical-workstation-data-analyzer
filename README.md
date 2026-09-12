@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.3.1.3
+# Electrochemical Workstation Data Analyzer — Stage 5.3.1.3.1
 
-当前开发状态：**Stage 5.3.1.3（Event-optional i-t analysis and LSV-consistent batch metadata editing）**。
+当前开发状态：**Stage 5.3.1.3.1（Align i-t batch metadata controls with LSV interaction）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -344,7 +344,7 @@ Generic i-t formal analysis now has two explicit result modes. If every included
 
 If the Default Timeline or an included sample override contains an Event, the batch enters **Event mode**. Defined but unconfirmed Timelines remain blocking; confirmed Timelines continue through the unchanged Stage 5.3 baseline, tail-fraction, signed ΔI, magnitude and explicit Calibration formulas. Empty effective Timelines in an Event batch may be explicitly confirmed and yield absent responses rather than being silently analyzed as continuous records.
 
-i-t metadata now reuses the LSV `MetadataSelectionModel`: normal click, Ctrl-click, Shift range selection, Ctrl+A, drag range selection, Select All and Clear Selection follow the same interaction pattern. “批量设置选中行” atomically applies Include, Group and/or Notes; checkboxes distinguish “do not modify” from intentional clearing. Sample ID is intentionally excluded because assigning one value to several rows would violate uniqueness. Batch edits invalidate metadata confirmation, stale an existing result, and preserve sample Timeline overrides through stable `record_key` identity. Windows checks are listed in `docs/windows_stage5313_checklist.md`.
+i-t metadata reuses the LSV `MetadataSelectionModel`: normal click, Ctrl-click, Shift range selection, Ctrl+A, drag range selection, Select All and Clear Selection follow the same interaction pattern. Stage 5.3.1.3.1 exposes the common actions directly below the table in LSV-like order: editable Group Combobox + “设置 Group”, “纳入”, “不纳入” and compact “设置备注”. Existing non-empty Group labels populate the Combobox while new labels remain editable; focusing it does not clear the Treeview selection. The former generic batch dialog was removed. Sample ID remains individually editable because assigning one value to several rows would violate uniqueness. Batch edits invalidate metadata confirmation, stale an existing result, and preserve sample Timeline overrides through stable `record_key` identity. Windows checks are listed in `docs/windows_stage53131_checklist.md`.
 
 ## 安装与测试
 

@@ -264,6 +264,7 @@ class ITWorkflowState:
                 self.current_timeline_record_key].include:
             self.current_timeline_record_key = None
         self._changed(metadata=True)
+        self.set_feedback("info", "样本信息已修改，请重新确认并运行分析。")
 
     def confirm_metadata(self) -> None:
         included = [row for row in self.metadata_rows if row.include]

@@ -22,10 +22,10 @@ from chi_gui.lsv_workflow import GUIWorkflowValidationError, StaleAnalysisResult
 from chi_gui.metadata_selection import MetadataSelectionModel
 from chi_gui.state import FileRecord, FileStatus
 from chi_gui.widgets.it_analysis import (
-    ITMetadataBatchDialog,
     ITResultsPanel,
     ITSettingsPanel,
     available_it_result_plots,
+    it_group_choices,
 )
 from plotting.it_events import build_it_event_figure
 
@@ -81,12 +81,12 @@ def test_drag_range_selection_matches_lsv_model():
     assert model.finish_drag()
 
 
-def test_batch_dialog_exposes_only_include_group_and_notes():
-    source = getsource(ITMetadataBatchDialog)
-    assert all(label in source for label in ("Include", "Group", "Notes"))
-    assert "Sample ID" in source
-    assert "sample_id=" not in source
-    assert "update_group" in source and "update_notes" in source
+def test_group_choices_are_stable_and_user_defined():
+    rows = [
+        type("Row", (), {"group": "A"})(), type("Row", (), {"group": "B"})(),
+        type("Row", (), {"group": " A "})(), type("Row", (), {"group": ""})(),
+    ]
+    assert it_group_choices(rows) == ("A", "B")
 
 
 def test_batch_group_include_and_notes_are_atomic_and_invalidate_confirmation(synthetic_it_data):

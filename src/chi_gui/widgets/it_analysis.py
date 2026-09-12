@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from math import isfinite
 import tkinter as tk
-from tkinter import messagebox, simpledialog, ttk
+from tkinter import simpledialog, ttk
 from time import monotonic
 from typing import Callable
 
@@ -88,59 +88,10 @@ def nearest_it_response_point(series, axis, event_x: float, event_y: float,
     return best
 
 
-class ITMetadataBatchDialog(simpledialog.Dialog):
-    """Explicit atomic batch edit; Sample ID intentionally remains per-row."""
+def it_group_choices(rows) -> tuple[str, ...]:
+    """Return stable, user-defined Group labels for the editable batch combobox."""
 
-    def __init__(self, parent, selected_count: int):
-        self.selected_count = selected_count
-        self.result: ITMetadataBatchEdit | None = None
-        super().__init__(parent, title="批量设置选中行")
-
-    def body(self, master):
-        ttk.Label(master, text=f"已选择：{self.selected_count} 个样本").grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
-        )
-        ttk.Label(master, text="Include：").grid(row=1, column=0, sticky="e")
-        self.include = tk.StringVar(value="不修改")
-        ttk.Combobox(master, textvariable=self.include,
-                     values=("不修改", "纳入", "不纳入"), state="readonly", width=12).grid(
-            row=1, column=1, sticky="w"
-        )
-        self.update_group = tk.BooleanVar(value=False)
-        ttk.Checkbutton(master, text="修改 Group", variable=self.update_group).grid(
-            row=2, column=0, sticky="w", pady=(6, 0)
-        )
-        self.group = tk.StringVar()
-        group_entry = ttk.Entry(master, textvariable=self.group, width=28)
-        group_entry.grid(row=2, column=1, columnspan=2, sticky="ew", pady=(6, 0))
-        self.update_notes = tk.BooleanVar(value=False)
-        ttk.Checkbutton(master, text="修改 Notes", variable=self.update_notes).grid(
-            row=3, column=0, sticky="w", pady=(6, 0)
-        )
-        self.notes = tk.StringVar()
-        ttk.Entry(master, textvariable=self.notes, width=28).grid(
-            row=3, column=1, columnspan=2, sticky="ew", pady=(6, 0)
-        )
-        ttk.Label(master, text="勾选后留空表示清空；未勾选表示不修改。Sample ID 需逐行保持唯一。",
-                  foreground="#555555", wraplength=360).grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
-        )
-        return group_entry
-
-    def validate(self):
-        if (self.include.get() == "不修改" and not self.update_group.get()
-                and not self.update_notes.get()):
-            messagebox.showwarning("没有修改", "请至少选择一个要修改的字段。", parent=self)
-            return False
-        return True
-
-    def apply(self):
-        include = {"不修改": None, "纳入": True, "不纳入": False}[self.include.get()]
-        self.result = ITMetadataBatchEdit(
-            include=include,
-            update_group=self.update_group.get(), group=self.group.get(),
-            update_notes=self.update_notes.get(), notes=self.notes.get(),
-        )
+    return tuple(dict.fromkeys(row.group.strip() for row in rows if row.group.strip()))
 
 
 class ITSettingsPanel(ttk.Frame):
@@ -185,7 +136,16 @@ class ITSettingsPanel(ttk.Frame):
         ttk.Label(batch, text="批量设置选中行：").pack(side="left")
         ttk.Button(batch, text="全选", command=self.select_all_rows).pack(side="left", padx=(0, 4))
         ttk.Button(batch, text="取消选择", command=self.clear_selection).pack(side="left", padx=(0, 6))
-        ttk.Button(batch, text="批量设置选中行", command=self._batch_metadata).pack(side="left")
+        self.batch_group = ttk.Combobox(batch, width=15, state="normal")
+        self.batch_group.pack(side="left", padx=3)
+        ttk.Button(batch, text="设置 Group", command=self._batch_group).pack(side="left")
+        ttk.Button(batch, text="纳入", command=lambda: self._batch_include(True)).pack(
+            side="left", padx=(10, 3)
+        )
+        ttk.Button(batch, text="不纳入", command=lambda: self._batch_include(False)).pack(
+            side="left", padx=3
+        )
+        ttk.Button(batch, text="设置备注", command=self._batch_notes).pack(side="left", padx=(7, 0))
         ttk.Button(metadata_frame, text="确认样本信息", command=on_confirm_metadata).grid(
             row=3, column=0, columnspan=2, sticky="e", pady=3
         )
@@ -292,6 +252,7 @@ class ITSettingsPanel(ttk.Frame):
         self._selection_model.reset(current_keys, selected)
         if selected:
             self.metadata.selection_set(self._selection_model.selection())
+        self.batch_group.configure(values=it_group_choices(state.metadata_rows))
         contexts = state.included_timeline_contexts
         self._timeline_context_keys = {label: key for key, label in contexts}
         labels = tuple(label for _key, label in contexts)
@@ -377,16 +338,38 @@ class ITSettingsPanel(ttk.Frame):
         self._selection_model.clear()
         self.metadata.selection_remove(self.metadata.selection())
 
-    def _batch_metadata(self):
+    def _selected_batch_keys(self):
         keys = tuple(self.metadata.selection())
         if not keys:
             if self._state is not None:
-                self._state.set_feedback("warning", "无法批量设置", ("请先选择至少一个样本。",))
+                self._state.set_feedback("warning", "无法批量设置", ("请先选择要设置的样本。",))
                 self.feedback.set(self._state.feedback.text)
+            return ()
+        return keys
+
+    def _batch_group(self):
+        keys = self._selected_batch_keys()
+        if keys:
+            self.on_change("batch_metadata", keys, ITMetadataBatchEdit(
+                update_group=True, group=self.batch_group.get()
+            ))
+
+    def _batch_include(self, include):
+        keys = self._selected_batch_keys()
+        if keys:
+            self.on_change("batch_metadata", keys, ITMetadataBatchEdit(include=bool(include)))
+
+    def _batch_notes(self):
+        keys = self._selected_batch_keys()
+        if not keys:
             return
-        dialog = ITMetadataBatchDialog(self, len(keys))
-        if dialog.result is not None:
-            self.on_change("batch_metadata", keys, dialog.result)
+        notes = simpledialog.askstring(
+            "设置备注", f"已选择 {len(keys)} 个样本。\nNotes（留空表示清空）：", parent=self
+        )
+        if notes is not None:
+            self.on_change("batch_metadata", keys, ITMetadataBatchEdit(
+                update_notes=True, notes=notes
+            ))
 
     def _event_values(self, old=None):
         name = simpledialog.askstring("Event", "Event 名称：", initialvalue=old.name if old else "", parent=self)
@@ -580,4 +563,4 @@ class ITResultPlotPanel(ttk.Frame):
 __all__ = ["ITResultPlotPanel", "ITResultsPanel", "ITSettingsPanel",
            "analysis_footer_wraplength", "analysis_run_button_state", "available_it_result_plots",
            "calibration_display_items", "event_display_rows", "event_double_click_edits",
-           "nearest_it_response_point", "normalize_it_result_plot"]
+           "it_group_choices", "nearest_it_response_point", "normalize_it_result_plot"]

@@ -4,7 +4,7 @@
 
 Electrochemical Workstation Data Analyzer is a desktop-oriented electrochemical data analysis project. Its repository-level identity is generic, while its currently validated native binary parser is deliberately narrower: real-file validation primarily covers CH Instruments CHI760E Linear Sweep Voltammetry (LSV) and Amperometric i-t Curve data. The project must not claim support for every workstation vendor or describe the parser as universal.
 
-The current development state is **Stage 5.3.1.3**, adding Event-optional Continuous i-t analysis and LSV-consistent multi-row metadata editing while preserving Event formulas.
+The current development state is **Stage 5.3.1.3.1**, exposing LSV-aligned inline i-t batch metadata controls while preserving Continuous/Event analysis and all scientific formulas.
 
 ## Architecture
 
@@ -56,7 +56,7 @@ Formal i-t Event times must be user-confirmed. Cursor readings may seed an edita
 
 ## Known follow-up work
 
-The formal Generic i-t GUI now provides Sample ID/Group/Notes metadata, LSV-consistent multi-row selection and atomic Include/Group/Notes batch editing, an optional arbitrary Event Timeline, cursor-assisted draft creation, result tables/plots, and mode-aware export. Sample ID stays individually editable because it must remain unique. Batch metadata edits preserve Timeline overrides by stable record key, invalidate metadata confirmation, and stale completed results. Calibration is optional in Event mode and unavailable in Continuous mode; numeric Events are never selected automatically. The GUI intentionally exposes only the default tail-fraction policy for Event mode while the backend retains explicit-window support. It does not expose a fixed Concentration/µM schema or Bare/Material roles.
+The formal Generic i-t GUI now provides Sample ID/Group/Notes metadata, LSV-consistent multi-row selection and atomic Include/Group/Notes batch editing, an optional arbitrary Event Timeline, cursor-assisted draft creation, result tables/plots, and mode-aware export. The i-t table exposes an editable Group Combobox plus direct Set Group / Include / Exclude / Set Notes actions; existing Group labels refresh from current metadata, and the obsolete generic batch dialog is not retained as a second path. Sample ID stays individually editable because it must remain unique. Batch metadata edits preserve Timeline overrides by stable record key, invalidate metadata confirmation, and stale completed results. Calibration is optional in Event mode and unavailable in Continuous mode; numeric Events are never selected automatically. The GUI intentionally exposes only the default tail-fraction policy for Event mode while the backend retains explicit-window support. It does not expose a fixed Concentration/µM schema or Bare/Material roles.
 
 i-t Timeline inheritance deliberately has only two levels: one Workspace-local Default Timeline plus optional per-sample overrides. There is no Group-level Timeline. Overrides are keyed by stable canonical record identity rather than editable Sample ID, are initially copied from Default with logical event_id values preserved, and then evolve independently. Default and every override have separate confirmation states; an existing unconfirmed override blocks formal analysis instead of silently falling back. Include=False preserves its override, record removal cleans the orphan, and Sample ID changes do not detach it. Formal orchestration chooses the confirmed Timeline per record and aligns responses/summaries/calibration by event_id, never by row index.
 
