@@ -100,6 +100,13 @@ def it_group_choices(rows) -> tuple[str, ...]:
     return tuple(dict.fromkeys(row.group.strip() for row in rows if row.group.strip()))
 
 
+def it_settings_view(mode: ITAnalysisMode, *, event_setup_requested: bool = False) -> str:
+    """Return the visible settings section without creating a second scientific mode."""
+
+    return ("event" if mode == ITAnalysisMode.EVENT or event_setup_requested
+            else "continuous")
+
+
 INTERRUPTION_LABELS = {
     InterruptionType.ACQUISITION_ERROR: "采集错误",
     InterruptionType.MANUAL_PAUSE: "手动暂停",
@@ -125,10 +132,12 @@ class ITSettingsPanel(ttk.Frame):
         self._selection_model = MetadataSelectionModel()
         self._suppress_edit_until = 0.0
         self._calibration_event_ids_by_index = ()
-        self.columnconfigure(0, weight=1); self.rowconfigure(0, weight=1)
-        panes = ttk.Panedwindow(self, orient="vertical"); panes.grid(row=0, column=0, sticky="nsew")
+        self._event_setup_requested = False
+        self._last_analysis_mode = None
+        self.columnconfigure(0, weight=1); self.rowconfigure(2, weight=1)
 
-        metadata_frame = ttk.LabelFrame(panes, text="① 样本信息")
+        metadata_frame = ttk.LabelFrame(self, text="① 样本信息")
+        self.metadata_frame = metadata_frame
         metadata_frame.columnconfigure(0, weight=1); metadata_frame.rowconfigure(0, weight=1)
         self.metadata = ttk.Treeview(metadata_frame, columns=("include", "file", "sample", "group", "notes"), show="headings", selectmode="extended", height=5)
         for key, label, width in (("include", "纳入", 55), ("file", "文件", 210),
@@ -165,9 +174,34 @@ class ITSettingsPanel(ttk.Frame):
         ttk.Button(metadata_frame, text="确认样本信息", command=on_confirm_metadata).grid(
             row=3, column=0, columnspan=2, sticky="e", pady=3
         )
-        panes.add(metadata_frame, weight=2)
+        metadata_frame.grid(row=0, column=0, sticky="nsew")
 
-        event_frame = ttk.LabelFrame(panes, text="② Event Timeline（用户明确定义并确认）")
+        self.mode_status_frame = ttk.Frame(self, padding=(4, 5))
+        self.mode_status_frame.grid(row=1, column=0, sticky="ew")
+        self.mode_status_frame.columnconfigure(0, weight=1)
+        self.mode_status = tk.StringVar(value="当前分析模式：Continuous Stability")
+        ttk.Label(self.mode_status_frame, textvariable=self.mode_status,
+                  foreground="#174a7e").grid(row=0, column=0, sticky="w")
+        self.mode_detail = tk.StringVar(value="Event Timeline：未定义；当前使用 Continuous mode")
+        self.mode_detail_label = ttk.Label(
+            self.mode_status_frame, textvariable=self.mode_detail,
+            foreground="#555555", wraplength=620, justify="left",
+        )
+        self.mode_detail_label.grid(row=1, column=0, sticky="w")
+        self.event_entry_button = ttk.Button(
+            self.mode_status_frame, text="进入 Event 设置", command=self._toggle_event_setup
+        )
+        self.event_entry_button.grid(row=0, column=1, rowspan=2, sticky="e")
+
+        self.mode_host = ttk.Frame(self)
+        self.mode_host.grid(row=2, column=0, sticky="nsew")
+        self.mode_host.columnconfigure(0, weight=1); self.mode_host.rowconfigure(0, weight=1)
+        self.event_mode_frame = ttk.Frame(self.mode_host)
+        self.event_mode_frame.columnconfigure(0, weight=1)
+        self.event_mode_frame.rowconfigure(0, weight=1)
+
+        event_frame = ttk.LabelFrame(self.event_mode_frame, text="② Event Timeline（用户明确定义并确认）")
+        self.event_frame = event_frame
         event_frame.columnconfigure(0, weight=1); event_frame.rowconfigure(1, weight=1)
         context_bar = ttk.Frame(event_frame)
         context_bar.grid(row=0, column=0, columnspan=6, sticky="ew", pady=(2, 4))
@@ -202,10 +236,14 @@ class ITSettingsPanel(ttk.Frame):
         self.edit_event_button.grid(row=2, column=2, sticky="w")
         ttk.Button(event_frame, text="删除", command=self._delete_events).grid(row=2, column=3, sticky="w")
         ttk.Button(event_frame, text="确认 Timeline", command=on_confirm_timeline).grid(row=2, column=5, sticky="e")
-        panes.add(event_frame, weight=3)
+        event_frame.grid(row=0, column=0, sticky="nsew")
 
-        continuous = ttk.LabelFrame(panes, text="③ Continuous Stability（仅 No-Event mode）")
-        continuous.columnconfigure(4, weight=1)
+        continuous = ttk.LabelFrame(self.mode_host, text="② Continuous Stability")
+        self.continuous_frame = continuous
+        continuous.columnconfigure(0, weight=1); continuous.rowconfigure(1, weight=1)
+        windows = ttk.LabelFrame(continuous, text="Stability Windows", padding=5)
+        self.continuous_windows_frame = windows
+        windows.grid(row=0, column=0, sticky="ew")
         self.analysis_start = tk.StringVar(); self.analysis_end = tk.StringVar()
         self.early_start = tk.StringVar(); self.early_end = tk.StringVar()
         self.late_start = tk.StringVar(); self.late_end = tk.StringVar()
@@ -214,19 +252,30 @@ class ITSettingsPanel(ttk.Frame):
                   ("Late window / s", self.late_start, self.late_end))
         self.continuous_entries = []
         for index, (label, start_variable, end_variable) in enumerate(fields):
-            ttk.Label(continuous, text=label).grid(row=index, column=0, sticky="e", padx=(3, 3))
-            start_entry = ttk.Entry(continuous, textvariable=start_variable, width=10)
+            ttk.Label(windows, text=label).grid(row=index, column=0, sticky="e", padx=(3, 3))
+            start_entry = ttk.Entry(windows, textvariable=start_variable, width=10)
             start_entry.grid(row=index, column=1, sticky="w")
-            ttk.Label(continuous, text="→").grid(row=index, column=2, padx=3)
-            end_entry = ttk.Entry(continuous, textvariable=end_variable, width=10)
+            ttk.Label(windows, text="→").grid(row=index, column=2, padx=3)
+            end_entry = ttk.Entry(windows, textvariable=end_variable, width=10)
             end_entry.grid(row=index, column=3, sticky="w")
             self.continuous_entries.extend((start_entry, end_entry))
-        self.continuous_apply = ttk.Button(continuous, text="应用窗口", command=self._set_continuous)
+        self.continuous_apply = ttk.Button(windows, text="应用窗口", command=self._set_continuous)
         self.continuous_apply.grid(row=0, column=5, rowspan=3, padx=8)
-        ttk.Label(continuous, text="Analysis 留空 = 每条 record 实际起点至终点；Early/Late 必须成对明确设置。Retention=|Late mean|/|Early mean|×100%；Drift 显示 µA/min。",
-                  foreground="#555555", wraplength=800).grid(row=3, column=0, columnspan=7, sticky="w", pady=2)
-        interruption_bar = ttk.Frame(continuous); interruption_bar.grid(row=4, column=0, columnspan=7, sticky="ew")
-        ttk.Label(interruption_bar, text="无效/中断区间所属 record：").pack(side="left")
+        help_frame = ttk.Frame(windows)
+        help_frame.grid(row=3, column=0, columnspan=6, sticky="w", pady=(4, 0))
+        ttk.Label(help_frame, text="Analysis range 留空：使用各 record 实际范围。",
+                  foreground="#555555").grid(row=0, column=0, sticky="w")
+        ttk.Label(help_frame, text="Retention = |Late mean| / |Early mean| × 100%。",
+                  foreground="#555555").grid(row=1, column=0, sticky="w")
+        ttk.Label(help_frame, text="Drift 显示 µA/min。",
+                  foreground="#555555").grid(row=2, column=0, sticky="w")
+
+        interruptions = ttk.LabelFrame(continuous, text="数据质量 / 中断区间", padding=5)
+        self.interruptions_frame = interruptions
+        interruptions.grid(row=1, column=0, sticky="nsew", pady=(5, 0))
+        interruptions.columnconfigure(0, weight=1); interruptions.rowconfigure(1, weight=1)
+        interruption_bar = ttk.Frame(interruptions); interruption_bar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        ttk.Label(interruption_bar, text="记录：").pack(side="left")
         self.interruption_record = tk.StringVar()
         self.interruption_record_combo = ttk.Combobox(interruption_bar, textvariable=self.interruption_record,
                                                        state="readonly", width=36)
@@ -238,17 +287,22 @@ class ITSettingsPanel(ttk.Frame):
         for key, label, width in (("start", "Start / s", 90), ("end", "End / s", 90),
                                   ("type", "Type", 110), ("reason", "Reason / Notes", 300)):
             self.interruptions.heading(key, text=label); self.interruptions.column(key, width=width, stretch=key == "reason")
-        self.interruptions.grid(row=5, column=0, columnspan=5, sticky="nsew", pady=2)
+        self.interruptions.grid(row=1, column=0, sticky="nsew", pady=2)
         self.interruptions.bind("<Double-1>", lambda _event: self._edit_interruption())
-        self.add_interruption_button = ttk.Button(continuous, text="添加区间", command=self._add_interruption)
-        self.add_interruption_button.grid(row=5, column=5, sticky="nw", padx=3)
-        self.edit_interruption_button = ttk.Button(continuous, text="编辑", command=self._edit_interruption)
-        self.edit_interruption_button.grid(row=5, column=6, sticky="nw")
-        self.delete_interruption_button = ttk.Button(continuous, text="删除", command=self._delete_interruptions)
-        self.delete_interruption_button.grid(row=6, column=6, sticky="nw")
-        panes.add(continuous, weight=2)
+        interruption_scroll = ttk.Scrollbar(interruptions, orient="vertical", command=self.interruptions.yview)
+        interruption_scroll.grid(row=1, column=1, sticky="ns")
+        self.interruptions.configure(yscrollcommand=interruption_scroll.set)
+        interruption_actions = ttk.Frame(interruptions)
+        interruption_actions.grid(row=2, column=0, columnspan=2, sticky="e")
+        self.add_interruption_button = ttk.Button(interruption_actions, text="添加区间", command=self._add_interruption)
+        self.add_interruption_button.pack(side="left", padx=3)
+        self.edit_interruption_button = ttk.Button(interruption_actions, text="编辑", command=self._edit_interruption)
+        self.edit_interruption_button.pack(side="left", padx=3)
+        self.delete_interruption_button = ttk.Button(interruption_actions, text="删除", command=self._delete_interruptions)
+        self.delete_interruption_button.pack(side="left", padx=3)
 
-        settings = ttk.LabelFrame(panes, text="④ Event 响应设置与 ⑤ 可选 Calibration")
+        settings = ttk.LabelFrame(self.event_mode_frame, text="③ Event 响应与 Calibration")
+        self.event_settings_frame = settings
         self.tail = tk.StringVar(value="0.20"); self.metric = tk.StringVar(value="signed")
         ttk.Label(settings, text="平台尾段比例 (0 < f ≤ 1)：").grid(row=0, column=0, sticky="w")
         ttk.Entry(settings, textvariable=self.tail, width=9).grid(row=0, column=1, sticky="w")
@@ -262,22 +316,27 @@ class ITSettingsPanel(ttk.Frame):
             settings, text="启用 Calibration（仅显式选择有数值且单位一致的 Events）",
             variable=self.calibration_enabled, command=self._set_calibration
         )
-        self.calibration_toggle.grid(row=2, column=0, columnspan=3, sticky="w")
+        self.calibration_toggle.grid(row=2, column=0, columnspan=6, sticky="w")
+        self.calibration_details = ttk.Frame(settings)
+        self.calibration_details.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(3, 0))
+        self.calibration_details.columnconfigure(4, weight=1)
         self.x_label = tk.StringVar(); self.x_unit = tk.StringVar()
-        ttk.Label(settings, text="x label").grid(row=3, column=0, sticky="e")
-        self.x_label_entry = ttk.Entry(settings, textvariable=self.x_label, width=16)
-        self.x_label_entry.grid(row=3, column=1, sticky="w")
-        ttk.Label(settings, text="x unit").grid(row=3, column=2, sticky="e")
-        self.x_unit_entry = ttk.Entry(settings, textvariable=self.x_unit, width=12)
-        self.x_unit_entry.grid(row=3, column=3, sticky="w")
-        self.calibration_events = tk.Listbox(settings, selectmode="extended", exportselection=False, height=3, width=35)
-        self.calibration_events.grid(row=2, column=4, rowspan=2, sticky="ew", padx=5)
-        self.calibration_apply = ttk.Button(settings, text="应用 Calibration 设置", command=self._set_calibration)
-        self.calibration_apply.grid(row=3, column=5, sticky="w")
-        panes.add(settings, weight=2)
+        ttk.Label(self.calibration_details, text="x label").grid(row=0, column=0, sticky="e")
+        self.x_label_entry = ttk.Entry(self.calibration_details, textvariable=self.x_label, width=16)
+        self.x_label_entry.grid(row=0, column=1, sticky="w")
+        ttk.Label(self.calibration_details, text="x unit").grid(row=0, column=2, sticky="e", padx=(8, 2))
+        self.x_unit_entry = ttk.Entry(self.calibration_details, textvariable=self.x_unit, width=12)
+        self.x_unit_entry.grid(row=0, column=3, sticky="w")
+        self.calibration_events = tk.Listbox(self.calibration_details, selectmode="extended",
+                                             exportselection=False, height=3, width=35)
+        self.calibration_events.grid(row=0, column=4, rowspan=2, sticky="ew", padx=5)
+        self.calibration_apply = ttk.Button(self.calibration_details, text="应用 Calibration 设置",
+                                            command=self._set_calibration)
+        self.calibration_apply.grid(row=1, column=3, sticky="e", pady=(3, 0))
+        settings.grid(row=1, column=0, sticky="ew", pady=(5, 0))
 
         self.footer = ttk.Frame(self)
-        self.footer.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        self.footer.grid(row=3, column=0, sticky="ew", pady=(5, 0))
         self.footer.columnconfigure(0, weight=1, minsize=0)
         self.footer.columnconfigure(1, weight=0)
         self.status = tk.StringVar()
@@ -304,6 +363,12 @@ class ITSettingsPanel(ttk.Frame):
         self._state = state
         same_workspace = workspace_token == self._workspace_token
         selected = self.metadata.selection() if same_workspace else ()
+        if not same_workspace:
+            self._event_setup_requested = False
+            self._last_analysis_mode = None
+        elif (self._last_analysis_mode == ITAnalysisMode.EVENT
+              and state.analysis_mode == ITAnalysisMode.CONTINUOUS):
+            self._event_setup_requested = False
         self._workspace_token = workspace_token
         self.metadata.delete(*self.metadata.get_children())
         for row in state.metadata_rows:
@@ -374,9 +439,53 @@ class ITSettingsPanel(ttk.Frame):
             self.calibration_events.insert("end", label)
             if event_id in state.calibration_event_ids:
                 self.calibration_events.selection_set(list_index)
+        if state.analysis_mode == ITAnalysisMode.EVENT and state.calibration_enabled:
+            self.calibration_details.grid()
+        else:
+            self.calibration_details.grid_remove()
+        self._apply_mode_visibility(state)
+        self._last_analysis_mode = state.analysis_mode
         self.status.set("    ".join(workflow_status_lines(state)))
         self.feedback.set(state.feedback.text)
         self.run_button.configure(state=analysis_run_button_state(busy=busy))
+
+    def _apply_mode_visibility(self, state: ITWorkflowState) -> None:
+        view = it_settings_view(
+            state.analysis_mode, event_setup_requested=self._event_setup_requested
+        )
+        self.continuous_frame.grid_remove()
+        self.event_mode_frame.grid_remove()
+        if view == "continuous":
+            self.continuous_frame.grid(row=0, column=0, sticky="nsew")
+        else:
+            self.event_mode_frame.grid(row=0, column=0, sticky="nsew")
+        if state.analysis_mode == ITAnalysisMode.EVENT:
+            self.event_settings_frame.grid()
+            self.mode_status.set("当前分析模式：Event Analysis")
+            confirmed = "已确认" if state.current_timeline_confirmed else "未确认"
+            self.mode_detail.set(
+                f"当前 Timeline：{confirmed}，{len(state.current_events)} 个 Event；"
+                f"{state.timeline_context_status}"
+            )
+            self.event_entry_button.grid_remove()
+        elif self._event_setup_requested:
+            self.event_settings_frame.grid_remove()
+            self.mode_status.set("当前分析模式：Continuous Stability")
+            self.mode_detail.set("Event 设置已展开；添加首个 Event 后自动进入 Event Analysis。")
+            self.event_entry_button.configure(text="返回 Continuous Stability")
+            self.event_entry_button.grid()
+        else:
+            self.event_settings_frame.grid_remove()
+            self.mode_status.set("当前分析模式：Continuous Stability")
+            self.mode_detail.set("Event Timeline：未定义；当前使用 Continuous mode。")
+            self.event_entry_button.configure(text="进入 Event 设置")
+            self.event_entry_button.grid()
+
+    def _toggle_event_setup(self) -> None:
+        if self._state is None or self._state.analysis_mode != ITAnalysisMode.CONTINUOUS:
+            return
+        self._event_setup_requested = not self._event_setup_requested
+        self._apply_mode_visibility(self._state)
 
     def _footer_resized(self, event):
         wraplength = analysis_footer_wraplength(
@@ -740,4 +849,5 @@ class ITResultPlotPanel(ttk.Frame):
 __all__ = ["ITResultPlotPanel", "ITResultsPanel", "ITSettingsPanel",
            "analysis_footer_wraplength", "analysis_run_button_state", "available_it_result_plots",
            "calibration_display_items", "event_display_rows", "event_double_click_edits",
-           "it_group_choices", "nearest_it_response_point", "normalize_it_result_plot"]
+           "it_group_choices", "it_settings_view", "nearest_it_response_point",
+           "normalize_it_result_plot"]

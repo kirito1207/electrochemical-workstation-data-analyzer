@@ -704,7 +704,6 @@ def continuous_group_display_rows(result: ITEventBatchResult) -> tuple[dict[str,
 
 def workflow_status_lines(workflow: ITWorkflowState) -> tuple[str, ...]:
     if workflow.analysis_mode == ITAnalysisMode.CONTINUOUS:
-        timeline_status = "未定义（Continuous mode）"
         settings = workflow.continuous_settings
         analysis_label = ("各 record 实际范围" if settings.analysis_start_s is None else
                           f"{settings.analysis_start_s:g}–{settings.analysis_end_s:g} s")
@@ -712,17 +711,19 @@ def workflow_status_lines(workflow: ITWorkflowState) -> tuple[str, ...]:
                        f"{settings.early_start_s:g}–{settings.early_end_s:g} s")
         late_label = ("未设置" if settings.late_start_s is None else
                       f"{settings.late_start_s:g}–{settings.late_end_s:g} s")
-        response_status = (f"Stability：Analysis {analysis_label}；Early {early_label}；"
-                           f"Late {late_label}；中断 {sum(map(len, workflow.continuous_interruptions.values()))}")
-    else:
-        event_count = len(workflow.events)
-        timeline_status = (f"已确认 {event_count} Events" if workflow.timeline_confirmed
-                           else "未确认")
-        response_status = f"响应设置：尾段 {workflow.tail_fraction:.0%}；{workflow.analysis_metric}"
+        return (
+            f"① 样本信息：{'已确认' if workflow.metadata_confirmed else '未确认'}",
+            "② Mode：Continuous Stability（Continuous mode）",
+            (f"③ Stability：Analysis {analysis_label}；Early {early_label}；"
+             f"Late {late_label}；中断 {sum(map(len, workflow.continuous_interruptions.values()))}"),
+            f"④ 正式分析：{workflow.result_status}",
+        )
+    timeline_status = "已确认" if workflow.current_timeline_confirmed else "未确认"
     return (
         f"① 样本信息：{'已确认' if workflow.metadata_confirmed else '未确认'}",
-        f"② Event Timeline：{timeline_status}；专用 {len(workflow.sample_timeline_overrides)}",
-        f"③ {response_status}",
+        (f"② Event Timeline：{timeline_status} {len(workflow.current_events)} Events；"
+         f"专用 {len(workflow.sample_timeline_overrides)}"),
+        f"③ Event Response：尾段 {workflow.tail_fraction:.0%}；{workflow.analysis_metric}",
         f"④ Calibration：{'开启' if workflow.calibration_enabled else '关闭'}",
         f"⑤ 正式分析：{workflow.result_status}",
     )

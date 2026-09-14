@@ -4,7 +4,7 @@
 
 Electrochemical Workstation Data Analyzer is a desktop-oriented electrochemical data analysis project. Its repository-level identity is generic, while its currently validated native binary parser is deliberately narrower: real-file validation primarily covers CH Instruments CHI760E Linear Sweep Voltammetry (LSV) and Amperometric i-t Curve data. The project must not claim support for every workstation vendor or describe the parser as universal.
 
-The current development state is **Stage 5.3.2**, providing interruption-aware Continuous i-t stability analysis while preserving Event analysis and parser behavior.
+The current development state is **Stage 5.3.2.1**, refining the i-t analysis-settings layout so only the controls relevant to the derived Continuous or Event mode occupy the page.
 
 ## Architecture
 
@@ -67,6 +67,8 @@ All scientific figures share one CJK-capable Matplotlib font policy. Windows pre
 An Event display index is not its `event_id`. The GUI derives `1..N` from the current time-sorted Timeline only for presentation. Stable `event_id` remains the immutable scientific/internal identity used for Treeview iid, Default/override alignment, Calibration selections, response summaries, stale signatures, and export provenance; deleted IDs are not reused and display reordering never renumbers them. Workspace display numbering remains a separate UI convention and is unchanged.
 
 The i-t settings footer reserves an independent action column for the run button. Status and feedback occupy a bounded, wrapping text column, so long stale or validation messages cannot displace the action. The run action stays available for correction/reanalysis and is disabled only while background work is busy.
+
+The i-t settings presentation is mode-aware but does not own a second scientific mode flag. Visibility is derived from the existing effective-Timeline `ITWorkflowState.analysis_mode`: no effective Event means Continuous, while any effective Event—including an unconfirmed draft—means Event context. Metadata and the footer are always visible; one mode-specific frame is managed at a time. Opening the Event editor from an empty Continuous workflow is a temporary GUI presentation action only. Hidden Continuous windows/interruptions and Event Timeline/response/Calibration state are retained and are not reset by visibility changes. Calibration details are progressively shown only when Event-mode Calibration is enabled. GUI visibility never changes backend results, scientific formulas, export schemas, parser behavior, or raw arrays.
 
 The existing `ComparisonDefinition` remains the explicit pairwise contract between any two Groups. Omnibus results are stored separately and must not be inserted into pairwise rows. Do not add Games–Howell, Tukey, Dunn, paired/repeated-measures, or mixed-effects tests without a separate scientific/statistical design discussion.
 

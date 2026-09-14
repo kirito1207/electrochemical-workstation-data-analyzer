@@ -1,6 +1,6 @@
-# Electrochemical Workstation Data Analyzer — Stage 5.3.2
+# Electrochemical Workstation Data Analyzer — Stage 5.3.2.1
 
-当前开发状态：**Stage 5.3.2（Continuous i-t Stability Analysis + Interruption-aware QC）**。
+当前开发状态：**Stage 5.3.2.1（Mode-aware i-t analysis layout refinement）**。
 
 电化学工作站数据分析软件。当前重点支持并验证 CH Instruments CHI760E 原生 LSV 与 i-t 数据解析、统计分析、可视化和 GUI 工作流。
 
@@ -353,6 +353,12 @@ No-Event Continuous mode now supports a user-defined absolute analysis range plu
 Each record may have its own explicitly entered invalid/interruption intervals with stable IDs, type and notes. These intervals are analysis metadata: the original arrays and full raw plot remain unchanged. An interval splits the selected range into `segment_1`, `segment_2`, …, each with duration, n, mean, sample SD and OLS slope/R². Overall drift is unavailable when the analysis range crosses a gap. Early/Late windows overlapping a gap are unavailable rather than recomputed after silently deleting samples. A Retention comparison across a gap is allowed when both windows are valid, but is marked `interrupted` and warned as a before/after ratio rather than uninterrupted operating stability. The software does not repair gaps, interpolate across them, smooth, baseline-correct, normalize, detrend, or fit exponential decay.
 
 Continuous results provide Record Stability, Segment / Interruption QC and Group Summary tables. Group summaries describe Retention, drift, Early current and Late current without automatic significance testing. Figures include the full Raw / Stability Timeline with window and interruption spans, Group Retention with a 100% reference, Group Drift with a zero reference, and a compact Group Stability Summary. Export now includes `continuous_stability.csv`, `continuous_segments.csv`, `continuous_group_summary.csv`, `interruptions.csv`, the compatibility `continuous_summary.csv`, and all continuous figures. Event mode formulas and Calibration remain unchanged. The LSV metadata batch bar also gains selected-row “纳入/不纳入” actions without changing Group, Electrode Type, selected-potential analysis, omnibus tests or pairwise statistics. Windows checks are listed in `docs/windows_stage532_checklist.md`.
+
+## Stage 5.3.2.1 Mode-aware i-t analysis layout
+
+The i-t analysis-settings page now derives its presentation directly from the existing effective-Timeline `analysis_mode`; there is no independent Continuous/Event toggle. Metadata remains visible at the top, followed by a concise current-mode status, one mode-specific content frame, and the independent stable footer. In ordinary Continuous mode the empty full Event table and Event response/Calibration controls do not participate in geometry. A compact “进入 Event 设置” entry can reveal the Timeline editor without changing scientific mode; adding the first Event naturally enters Event Analysis, including while the Timeline is still unconfirmed. Deleting the final Event returns to Continuous presentation.
+
+Continuous presentation separates compact three-row Stability Windows from a Data Quality / Interruption area with a three-row table and scrollbar. Event presentation contains the complete Default/override Timeline editor and Event response settings. Calibration uses progressive disclosure: when disabled only the checkbox remains; enabling it reveals x label/unit, explicit Event selection and the apply action. Hiding a mode-specific frame does not reset Continuous windows, interruptions, Event drafts, overrides, tail fraction, metric or Calibration fields; existing workflow rules remain responsible for any state clearing. Status lines are mode-aware, and the footer's wrapping text column remains separate from the fixed run-button column. This stage changes no analysis result, formula, parser, export field, plot type or scientific metric. Windows checks are in `docs/windows_stage5321_checklist.md`.
 
 ## 安装与测试
 
